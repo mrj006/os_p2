@@ -6,7 +6,7 @@ use std::{collections::HashMap, io::Write, net::{SocketAddr, TcpListener, TcpStr
 
 use response::HttpResponse;
 
-use crate::errors::{*};
+use crate::errors::{self, *};
 
 use self::parser::parse;
 
@@ -33,8 +33,16 @@ fn handle_requests(req: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     let message = parse(&req);
 
     // Error handling based on error type
-    if let Err(_) = message {
-        return send_response(req, version, 400, HashMap::new(), "".to_string());
+    if let Err(e) = &message {
+        if e.is::<errors::parse::ParseUriError>() {
+            return send_response(req, version, 400, HashMap::new(), "".to_string());
+        }
+
+        if e.is::<errors::implement::ImplementationError>() {
+            return send_response(req, version, 501, HashMap::new(), "".to_string());
+        } else {
+            return send_response(req, version, 500, HashMap::new(), "".to_string());
+        }
     }
 
     //Call method handler and check for errors
