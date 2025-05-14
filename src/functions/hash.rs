@@ -1,7 +1,5 @@
-use sha2::{Sha256, Digest};
+use sha256::digest;
 
 pub fn hash(text: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(text.as_bytes());
-    format!("{:x}", hasher.finalize())
+    format!("{}", digest(text))
 }

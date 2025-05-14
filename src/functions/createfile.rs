@@ -1,10 +1,16 @@
-use std::fs::File;
+use std::fs;
 use std::io::Write;
 
-pub fn createfile(name: &str, content: &str, repeat: usize) -> std::io::Result<()> {
-    let mut file = File::create(name)?;
+pub fn createfile(name: &str, content: &str, repeat: u64) -> std::io::Result<()> {
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(name)?;
+
+
     for _ in 0..repeat {
-        file.write_all(content.as_bytes())?;
+        write!(file, "{}", content)?;
     }
+    
     Ok(())
 }

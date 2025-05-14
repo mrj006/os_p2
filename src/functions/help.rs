@@ -1,4 +1,4 @@
-pub fn help() -> &'static str {
+pub fn help() -> String {
     "
 Available Commands:
 /fibonacci?num=N
@@ -14,5 +14,5 @@ Available Commands:
 /sleep?seconds=s
 /loadtest?tasks=n&sleep=x
 /help
-"
+".to_string()
 }
