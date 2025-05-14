@@ -51,7 +51,7 @@ impl DynamicHandler {
                 handler.active_threads.fetch_add(1, Ordering::SeqCst);
 
                 thread::spawn(move || {
-                    handle_request(request);
+                    handle_request(request, &handler_clone.queue);
                     handler_clone.active_threads.fetch_sub(1, Ordering::SeqCst);
                 });
             } else {
@@ -62,9 +62,14 @@ impl DynamicHandler {
     }
 }
 
-pub fn handle_request(req: HttpRequest) {
+pub fn handle_request(req: HttpRequest, queue: &RequestQueue){
     if let Some(route) = req.uri.get(1) {
         match route.as_str() {
+            
+            "loadtest" => {
+                expandir_loadtest(&req, queue);
+            }
+            
             "createfile" => {
                 let name = req.params.get("name");
                 let content = req.params.get("content");
@@ -174,3 +179,25 @@ pub fn handle_request(req: HttpRequest) {
     }
 }
 
+fn expandir_loadtest(req: &HttpRequest, queue: &RequestQueue) {
+    let tasks = req.params.get("tasks");
+    let sleep_time = req.params.get("sleep");
+
+    if let (Some(tasks), Some(sleep_time)) = (tasks, sleep_time) {
+        if let (Ok(n), Ok(sleep_val)) = (tasks.parse::<usize>(), sleep_time.parse::<u64>()) {
+            for i in 0..n {
+                let mut new_req = req.clone();
+
+                // Redefinir como si fueran /sleep requests
+                new_req.uri = vec!["/".to_string(), "sleep".to_string()];
+                new_req.params.clear();
+                new_req.params.insert("seconds".to_string(), sleep_val.to_string());
+                new_req.params.insert("task_id".to_string(), format!("task_{}", i + 1));
+
+                queue.enqueue(new_req);
+            }
+
+            println!("[loadtest] Encoladas {} tareas de sleep({})", n, sleep_val);
+        }
+    }
+}
