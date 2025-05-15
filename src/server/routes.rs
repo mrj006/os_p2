@@ -1,9 +1,9 @@
-use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}};
+use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}, sync::{Arc, Mutex}};
 
 use super::{request::HttpRequest, response::HttpResponse};
-use crate::functions;
+use crate::{functions, pool::status::Status};
 
-pub fn handle_route(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+pub fn handle_route(req: HttpRequest, port: u16, status_clone: Arc<Mutex<Status>>) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Basedon parsing logic, the vecotr will always have at least 1 item
     let base_uri = req.uri[0].as_str();
 
@@ -13,11 +13,12 @@ pub fn handle_route(req: HttpRequest, address: SocketAddr) -> Result<HttpRespons
         "fibonacci" => Ok(fibonacci(req)),
         "hash" => Ok(hash(req)),
         "help" => Ok(help(req)),
-        "loadtest" => loadtest(req, address),
+        "loadtest" => loadtest(req, port),
         "random" => Ok(random(req)),
         "reverse" => Ok(reverse(req)),
         "simulate" => Ok(simulate(req)),
         "sleep" => Ok(sleep(req)),
+        "status" => Ok(status(req, status_clone)),
         "timestamp" => Ok(timestamp(req)),
         "toupper" => Ok(toupper(req)),
         _ => Ok(HttpResponse::basic(404))
@@ -128,7 +129,7 @@ fn help(req: HttpRequest) -> HttpResponse {
     valid_request(run)
 }
 
-fn loadtest(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+fn loadtest(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     if req.method != "GET" {
         return Ok(HttpResponse::basic(405));
     }
@@ -157,7 +158,7 @@ fn loadtest(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<d
     let request = format!("GET /sleep?seconds={sleep} HTTP/1.1 \r\n\r\n");
     
     for n in 0..tasks {
-        let mut stream = TcpStream::connect(address)?;
+        let mut stream = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], port)))?;
         let _ = stream.write_all(request.as_bytes())?;
 
         if n == (tasks - 1) {
@@ -270,6 +271,35 @@ fn sleep(req: HttpRequest) -> HttpResponse {
     valid_request(run)
 }
 
+fn status(req: HttpRequest, status: Arc<Mutex<Status>>) -> HttpResponse {
+    if req.method != "GET" {
+        return HttpResponse::basic(405);
+    }
+
+    let mut status = status.lock();
+
+    // If a thread panic'd, we could 'unwrap' the error and re-acquire
+    // the lock
+    if let Err(error) = status {
+        let data = error.into_inner();
+        status = Ok(data);
+    }
+
+    // We can safely unwrap the guard as we already handled the poison
+    let status = status.unwrap();
+    let contents = status.status();
+
+    // We drop the status early to avoid delyaing other threads
+    drop(status);
+
+    let content_length = contents.len();
+    let mut headers: HashMap<String, String> = HashMap::new();
+    headers.insert("Content-Length".to_string(), content_length.to_string());
+    headers.insert("Content-Type".to_string(), "application/json".to_string());
+    
+    HttpResponse::new("HTTP/1.1".to_string(), 200, headers, contents)
+}
+
 fn timestamp(req: HttpRequest) -> HttpResponse {
     if req.method != "GET" {
         return HttpResponse::basic(405);
@@ -303,4 +333,8 @@ fn invalid_request(contents: String) -> HttpResponse {
 fn valid_request(contents: String) -> HttpResponse {
     let res = HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents);
     res
+}
+
+fn status_set_command() {
+
 }
