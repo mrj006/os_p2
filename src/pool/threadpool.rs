@@ -1,5 +1,7 @@
-use std::{thread, sync::{mpsc, Arc, Mutex}};
+use std::{sync::{mpsc, Arc, Mutex}, thread};
 use crate::errors::pool::PoolError;
+
+use super::status::Status;
 
 pub struct ThreadPool {
     workers: Vec<Worker>,
@@ -9,7 +11,7 @@ pub struct ThreadPool {
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
 impl ThreadPool {
-    pub fn build(size: usize) -> Result<ThreadPool, Box<dyn std::error::Error>> {
+    pub fn build(size: usize, status: Arc<Mutex<Status>>) -> Result<ThreadPool, Box<dyn std::error::Error>> {
         if size < 1 {
             return Err(Box::new(PoolError));
         }
@@ -26,7 +28,7 @@ impl ThreadPool {
 
         for id in 0..size {
             // We send a pointer clone for each worker to have access to the queue
-            workers.push(Worker::new(id, Arc::clone(&receiver))?);
+            workers.push(Worker::new(id, Arc::clone(&receiver), Arc::clone(&status))?);
         }
 
         Ok(ThreadPool {workers, sender: Some(sender)})
@@ -61,32 +63,82 @@ struct Worker {
 }
 
 impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Result<Worker, Box<dyn std::error::Error>> {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>, status_clone: Arc<Mutex<Status>>) -> Result<Worker, Box<dyn std::error::Error>> {
         let builder = thread::Builder::new();
-        let thread = builder.spawn(move || loop {
-            let mut message = receiver.lock();
+        let thread = builder.spawn(move || {
+            // We add the thread to the status struct
+            let pid = gettid::gettid();
+            Self::status_add_worker(Arc::clone(&status_clone), pid);
 
-            // If a thread panic'd, we could 'unwrap' the error and re-acquire
-            // the lock
-            if let Err(error) = message {
-                let data = error.into_inner();
-                message = Ok(data);
+            loop {
+                let mut message = receiver.lock();
+    
+                // If a thread panic'd, we could 'unwrap' the error and re-acquire
+                // the lock
+                if let Err(error) = message {
+                    let data = error.into_inner();
+                    message = Ok(data);
+                }
+    
+                // We can safely unwrap the guard as we already handled the poison
+                let message = message.unwrap().recv();
+    
+                // The only error at this point is a sender dropped
+                // The only way to receive that error is if the pool is closing
+                if let Err(_) = message {
+                    println!("Incoming channel closed, shutting down worker {id}");
+                    break;
+                }
+                println!("Worker {id} working...");
+
+                // We need access again to the status struct to update the
+                // thread status
+                Self::status_update_worker(Arc::clone(&status_clone), pid, true, "parsing".to_string());
+
+                // The double parenthesis means we are callin the boxed function
+                message.unwrap()();
+                println!("Worker {id} finished!");
+                Self::status_update_worker(Arc::clone(&status_clone), pid, false, "".to_string());
             }
-
-            // We can safely unwrap the guard as we already handled the poison
-            let message = message.unwrap().recv();
-
-            // The only error at this point is a sender dropped
-            // The only way to receive that error is if the pool is closing
-            if let Err(_) = message {
-                println!("Incoming channel closed, shutting down worker {id}");
-                break;
-            }
-            println!("Worker {id} working...");
-            // The double parenthesis means we are callin the boxed function
-            message.unwrap()();
-            println!("Worker {id} finished!");
         })?;
         Ok(Worker { id, thread })
+    }
+
+    fn status_add_worker(status_clone: Arc<Mutex<Status>>, pid: u64) {
+        let mut status = status_clone.lock();
+
+        // If a thread panic'd, we could 'unwrap' the error and re-acquire
+        // the lock
+        if let Err(error) = status {
+            let data = error.into_inner();
+            status = Ok(data);
+        }
+
+        // We can safely unwrap the guard as we already handled the poison
+        let mut status = status.unwrap();
+
+        status.add_worker(pid);
+        drop(status);
+    }
+
+    fn status_update_worker(status_clone: Arc<Mutex<Status>>, pid: u64, busy: bool, command: String) {
+        let mut status = status_clone.lock();
+
+        // If a thread panic'd, we could 'unwrap' the error and re-acquire
+        // the lock
+        if let Err(error) = status {
+            let data = error.into_inner();
+            status = Ok(data);
+        }
+
+        // We can safely unwrap the guard as we already handled the poison
+        let mut status = status.unwrap();
+        status.update_worker(pid, busy, command);
+
+        if busy {
+            status.increase_requests_handled();
+        }
+
+        drop(status);
     }
 }

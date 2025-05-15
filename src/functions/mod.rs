@@ -8,9 +8,7 @@ pub mod timestamp;
 pub mod hash;
 pub mod simulate;
 pub mod sleep;
-//pub mod loadtest; ya no se va a usar este
 pub mod help;
-pub mod status;
 
 #[cfg(test)]
 mod tests {

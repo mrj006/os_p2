@@ -3,10 +3,10 @@ mod response;
 mod parser;
 mod routes;
 
-use std::{io::Write, net::{SocketAddr, TcpListener, TcpStream}};
+use std::{io::Write, net::{SocketAddr, TcpListener, TcpStream}, sync::{Arc, Mutex}};
 use response::HttpResponse;
 
-use crate::pool;
+use crate::pool::{self, status::Status};
 use crate::errors::{self, *};
 
 use self::parser::parse;
@@ -21,7 +21,10 @@ pub fn create_server(port: u16) {
         panic!("Unrecoverable error! Check logs.");
     }
 
-    let pool = pool::threadpool::ThreadPool::build(4);
+    let status = pool::status::Status::new(gettid::gettid());
+    let status = Arc::new(Mutex::new(status));
+
+    let pool = pool::threadpool::ThreadPool::build(4, Arc::clone(&status));
 
     // At this point, we couldn't start the thread pool, so we panic the project
     if let Err(e) = pool {
@@ -35,8 +38,9 @@ pub fn create_server(port: u16) {
     for stream in listener.unwrap().incoming() {
         // We can ignore stream errors as we wouldn't be able to do anything
         if stream.is_ok() {
+            let status = Arc::clone(&status);
             pool.execute(move || {
-                if let Err(e) = handle_requests(stream.unwrap(), address.clone()) {
+                if let Err(e) = handle_requests(stream.unwrap(), port, status) {
                     log_error(e);
                 }
             });
@@ -44,7 +48,7 @@ pub fn create_server(port: u16) {
     }
 }
 
-fn handle_requests(req: TcpStream, address: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_requests(req: TcpStream, port: u16, status: Arc<Mutex<Status>>) -> Result<(), Box<dyn std::error::Error>> {
     let version = "HTTP/1.1".to_string();
     let message = parse(&req);
 
@@ -71,7 +75,7 @@ fn handle_requests(req: TcpStream, address: SocketAddr) -> Result<(), Box<dyn st
             return send_response(req, res);
     }
 
-    let res = routes::handle_route(message, address);
+    let res = routes::handle_route(message, port, status);
 
     if let Err(_) = res {
         let res = HttpResponse::basic(500);
