@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::Write, net::{SocketAddr, TcpStream}};
+use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}};
 
 use super::{request::HttpRequest, response::HttpResponse};
 use crate::functions;
@@ -156,9 +156,14 @@ fn loadtest(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<d
 
     let request = format!("GET /sleep?seconds={sleep} HTTP/1.1 \r\n\r\n");
     
-    for _ in 0..tasks {
+    for n in 0..tasks {
         let mut stream = TcpStream::connect(address)?;
         let _ = stream.write_all(request.as_bytes())?;
+
+        if n == (tasks - 1) {
+            let mut response = String::new();
+            let _ = stream.read_to_string(&mut response);
+        }
     }
 
     let contents = format!("{tasks} sleep tasks with a duration of {sleep} seconds were spawned");
