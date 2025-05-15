@@ -3,7 +3,7 @@ mod response;
 mod parser;
 mod routes;
 
-use std::{collections::HashMap, io::Write, net::{SocketAddr, TcpListener, TcpStream}};
+use std::{io::Write, net::{SocketAddr, TcpListener, TcpStream}};
 use response::HttpResponse;
 
 use crate::pool;
@@ -51,20 +51,27 @@ fn handle_requests(req: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     // Error handling based on error type
     if let Err(e) = &message {
         if e.is::<errors::parse::ParseUriError>() {
-            let res = HttpResponse::new(version, 400, HashMap::new(), "".to_string());
+        let res = HttpResponse::basic(400);
             return send_response(req, res);
         }
 
         if e.is::<errors::implement::ImplementationError>() {
-            let res = HttpResponse::new(version, 501, HashMap::new(), "".to_string());
+        let res = HttpResponse::basic(501);
             return send_response(req, res);
         } else {
-            let res = HttpResponse::new(version, 500, HashMap::new(), "".to_string());
+        let res = HttpResponse::basic(500);
             return send_response(req, res);
         }
     }
 
-    let res = routes::handle_route(message.unwrap());
+    let message = message.unwrap();
+
+    if message.version != version {
+        let res = HttpResponse::basic(505);
+            return send_response(req, res);
+    }
+
+    let res = routes::handle_route(message);
 
     if let Err(_) = res {
         let res = HttpResponse::basic(500);
