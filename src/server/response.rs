@@ -10,6 +10,31 @@ pub struct HttpResponse {
     pub contents: String,
 }
 
+impl HttpResponse {
+    pub fn new(version: String, status: u16, headers: HashMap<String, String>, contents: String) -> HttpResponse {
+        let reason = Self::reason_from_status(status);
+
+        HttpResponse { version, status, reason, headers, contents }
+    }
+
+    pub fn basic(status: u16) -> HttpResponse {
+        let reason = Self::reason_from_status(status);
+
+        HttpResponse { version: "HTTP/1.1".to_string(), status, reason, headers: HashMap::new(), contents: "".to_string() }
+    }
+
+    fn reason_from_status(status: u16) -> String {
+        (match status {
+            200 => "OK",
+            400 => "Bad Request",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            501 => "Not Implemented",
+            _ => "Internal Server Error"
+        }).to_string()
+    }
+}
+
 impl fmt::Display for HttpResponse {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut headers = "".to_string();
