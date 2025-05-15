@@ -46,13 +46,18 @@ fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     }
 
     let repeat = repeat.unwrap();
-    let run = functions::createfile::createfile(name, content, repeat);
-
-    if let Err(_) = run {
-        return Ok(invalid_request("File already exists!".to_string()));
+    match functions::createfile::createfile(name, content, repeat) {
+        Ok(_) => Ok(HttpResponse::basic(200)),
+        Err(e) => {
+            // Comprobamos si el error fue porque ya existía
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                return Ok(invalid_request("File already exists!".to_string()));
+            } else {
+                // Cualquier otro error es 500 interno
+                return Ok(HttpResponse::basic(500));
+            }
+        }
     }
-
-    Ok(HttpResponse::basic(200))
 }
 
 fn deletefile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Error>> {
@@ -154,6 +159,11 @@ fn loadtest(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<d
     let tasks = tasks.unwrap();
     let sleep = sleep.unwrap();
 
+    // Seguridad: evitar que tiren 10000 conexiones
+    if tasks == 0 || tasks > 1000 || sleep > 3600 {
+        return Ok(invalid_request("tasks must be between 1 and 1000, and sleep ≤ 3600".to_string()));
+    }
+    
     let request = format!("GET /sleep?seconds={sleep} HTTP/1.1 \r\n\r\n");
     
     for _ in 0..tasks {
@@ -199,8 +209,10 @@ fn random(req: HttpRequest) -> HttpResponse {
     let max = max.unwrap();
 
     let run = functions::random::random(count, min, max);
-    let run = format!("{:#?}", run);
-    valid_request(run)
+    match run {
+        Ok(vec) => valid_request(format!("{:#?}", vec)),
+        Err(msg) => invalid_request(msg),
+    }
 }
 
 fn reverse(req: HttpRequest) -> HttpResponse {

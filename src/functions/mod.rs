@@ -10,7 +10,7 @@ pub mod simulate;
 pub mod sleep;
 //pub mod loadtest; ya no se va a usar este
 pub mod help;
-pub mod status;
+//pub mod status;
 
 #[cfg(test)]
 mod tests {
@@ -76,10 +76,16 @@ mod tests {
 
     #[test]
     fn random() {
+        use crate::functions::random;
+
         let count = 5;
         let min = 10;
         let max = 200;
-        let vector = random::random(count, min, max);
+
+        let result = random::random(count, min, max);
+        assert!(result.is_ok());
+
+        let vector = result.unwrap();
         assert_eq!(count, vector.len());
 
         for number in vector {
@@ -90,6 +96,7 @@ mod tests {
             );
         }
     }
+
 
     #[test]
     fn reverse() {
