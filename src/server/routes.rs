@@ -47,13 +47,18 @@ fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     }
 
     let repeat = repeat.unwrap();
-    let run = functions::createfile::createfile(name, content, repeat);
-
-    if let Err(_) = run {
-        return Ok(invalid_request("File already exists!".to_string()));
+    match functions::createfile::createfile(name, content, repeat) {
+        Ok(_) => Ok(HttpResponse::basic(200)),
+        Err(e) => {
+            // Comprobamos si el error fue porque ya existía
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                return Ok(invalid_request("File already exists!".to_string()));
+            } else {
+                // Cualquier otro error es 500 interno
+                return Ok(HttpResponse::basic(500));
+            }
+        }
     }
-
-    Ok(HttpResponse::basic(200))
 }
 
 fn deletefile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Error>> {
@@ -205,8 +210,11 @@ fn random(req: HttpRequest) -> HttpResponse {
     let max = max.unwrap();
 
     let run = functions::random::random(count, min, max);
-    let run = format!("{:#?}", run);
-    valid_request(run)
+
+    match run {
+        Ok(vec) => valid_request(format!("{:#?}", vec)),
+        Err(msg) => invalid_request(msg),
+    }
 }
 
 fn reverse(req: HttpRequest) -> HttpResponse {
@@ -333,8 +341,4 @@ fn invalid_request(contents: String) -> HttpResponse {
 fn valid_request(contents: String) -> HttpResponse {
     let res = HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents);
     res
-}
-
-fn status_set_command() {
-
 }
