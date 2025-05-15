@@ -47,8 +47,8 @@ fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     let repeat = repeat.unwrap();
     let run = functions::createfile::createfile(name, content, repeat);
 
-    if let Err(e) = run {
-        return Err(Box::new(e));
+    if let Err(_) = run {
+        return Ok(invalid_request("File already exists!".to_string()));
     }
 
     Ok(HttpResponse::basic(200))
@@ -68,8 +68,8 @@ fn deletefile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     let name = name.unwrap();
     let run = functions::deletefile::deletefile(name);
 
-    if let Err(e) = run {
-        return Err(Box::new(e));
+    if let Err(_) = run {
+        return Ok(invalid_request("Unable to delete file!".to_string()));
     }
 
     Ok(HttpResponse::basic(200))
@@ -95,7 +95,11 @@ fn fibonacci(req: HttpRequest) -> HttpResponse {
     let num = num.unwrap();
     let run = functions::fibonacci::fibonacci(num);
     
-    valid_request(run.to_string())
+    if run.is_none() {
+        return HttpResponse::basic(507);
+    }
+
+    valid_request(run.unwrap().to_string())
 }
 
 fn hash(req: HttpRequest) -> HttpResponse {
@@ -140,8 +144,16 @@ fn random(req: HttpRequest) -> HttpResponse {
     let min = min.unwrap().parse::<i32>();
     let max = max.unwrap().parse::<i32>();
 
-    if let (Err(_), Err(_), Err(_)) = (&count, &min, &max) {
-        return invalid_request("Unable to parse params!".to_string());
+    if let Err(_) = count {
+        return invalid_request("Unable to parse count!".to_string());
+    }
+
+    if let Err(_) = min {
+        return invalid_request("Unable to parse min!".to_string());
+    }
+
+    if let Err(_) = max {
+        return invalid_request("Unable to parse max!".to_string());
     }
 
     let count = count.unwrap();

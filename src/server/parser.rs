@@ -110,6 +110,14 @@ fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<Str
         return Ok(body);
     }
 
+    // This unwrap shouldn't fail as we checked it and return early in the if above
+    let content_length = content_length.unwrap().parse::<u64>()?;
+
+    // If the content is 0-length'd, we can stop the function
+    if content_length == 0 {
+        return Ok(body);
+    }
+
     let content_type = headers.get("Content-Type");
 
     // This implies the request has a body but it didn't report the type
@@ -124,14 +132,6 @@ fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<Str
         return Err(Box::new(implement::ImplementationError));
     }
     
-    // This unwrap shouldn't fail as we checked it and return early in the if above
-    let content_length = content_length.unwrap().parse::<u64>()?;
-
-    // If the content is 0-length'd, we can stop the function
-    if content_length == 0 {
-        return Ok(body);
-    }
-
     // We read the indicated amount of bytes from the stream
     let mut content: Vec<u8> = vec![];
     let mut buffer_to_read = buf_reader.take(content_length);
@@ -152,6 +152,7 @@ fn parse_urlencoded(content: String) -> HashMap<String, String> {
         let pair: Vec<&str> = pair.split("=").collect();
         parsed.insert(pair[0].to_string(), pair[1].to_string());
     }
+    println!("{:#?}", parsed);
 
     parsed
 }

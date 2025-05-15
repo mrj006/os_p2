@@ -56,13 +56,13 @@ mod tests {
     #[test]
     fn fibonacci() {
         let result = fibonacci::fibonacci(0);
-        assert_eq!(0, result);
+        assert_eq!(0, result.unwrap());
 
         let result = fibonacci::fibonacci(1);
-        assert_eq!(1, result);
+        assert_eq!(1, result.unwrap());
 
         let result = fibonacci::fibonacci(100);
-        assert_eq!(354224848179261915075, result)
+        assert_eq!(354224848179261915075, result.unwrap())
     }
 
     #[test]
