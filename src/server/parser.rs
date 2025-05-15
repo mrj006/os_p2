@@ -41,7 +41,7 @@ fn parse_request_line(buf_reader: &mut BufReader<&mut &TcpStream>)
     let unchecked_uri: Vec<&str> = uri_line[0].split("/").collect();
     
     // Given the segments are separated by a slash, we add root to the vector
-    let mut uri: Vec<String> = vec!["/".to_string()];
+    let mut uri: Vec<String> = vec![];
 
     let mut len_to_check = unchecked_uri.len()-1;
 
@@ -60,6 +60,12 @@ fn parse_request_line(buf_reader: &mut BufReader<&mut &TcpStream>)
         }
 
         uri.push(unchecked_uri[i].to_string());
+    }
+
+    // If the vector is empty, we know the request is for the root URI
+    // This guarantees the vector's size is at least 1
+    if uri.len() == 0 {
+        uri.push("/".to_string());
     }
 
     let method = request_line[0].to_string();
