@@ -82,9 +82,10 @@ impl Worker {
                 println!("Incoming channel closed, shutting down worker {id}");
                 break;
             }
-
+            println!("Worker {id} working...");
             // The double parenthesis means we are callin the boxed function
             message.unwrap()();
+            println!("Worker {id} finished!");
         })?;
         Ok(Worker { id, thread })
     }

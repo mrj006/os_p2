@@ -35,8 +35,8 @@ pub fn create_server(port: u16) {
     for stream in listener.unwrap().incoming() {
         // We can ignore stream errors as we wouldn't be able to do anything
         if stream.is_ok() {
-            pool.execute(|| {
-                if let Err(e) = handle_requests(stream.unwrap()) {
+            pool.execute(move || {
+                if let Err(e) = handle_requests(stream.unwrap(), address.clone()) {
                     log_error(e);
                 }
             });
@@ -44,7 +44,7 @@ pub fn create_server(port: u16) {
     }
 }
 
-fn handle_requests(req: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_requests(req: TcpStream, address: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     let version = "HTTP/1.1".to_string();
     let message = parse(&req);
 
@@ -71,7 +71,7 @@ fn handle_requests(req: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
             return send_response(req, res);
     }
 
-    let res = routes::handle_route(message);
+    let res = routes::handle_route(message, address);
 
     if let Err(_) = res {
         let res = HttpResponse::basic(500);

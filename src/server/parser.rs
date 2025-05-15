@@ -152,7 +152,6 @@ fn parse_urlencoded(content: String) -> HashMap<String, String> {
         let pair: Vec<&str> = pair.split("=").collect();
         parsed.insert(pair[0].to_string(), pair[1].to_string());
     }
-    println!("{:#?}", parsed);
 
     parsed
 }

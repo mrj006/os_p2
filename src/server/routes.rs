@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Write, net::{SocketAddr, TcpStream}};
 
 use super::{request::HttpRequest, response::HttpResponse};
 use crate::functions;
 
-pub fn handle_route(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+pub fn handle_route(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Basedon parsing logic, the vecotr will always have at least 1 item
     let base_uri = req.uri[0].as_str();
 
@@ -13,6 +13,7 @@ pub fn handle_route(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error
         "fibonacci" => Ok(fibonacci(req)),
         "hash" => Ok(hash(req)),
         "help" => Ok(help(req)),
+        "loadtest" => loadtest(req, address),
         "random" => Ok(random(req)),
         "reverse" => Ok(reverse(req)),
         "simulate" => Ok(simulate(req)),
@@ -125,6 +126,43 @@ fn help(req: HttpRequest) -> HttpResponse {
 
     let run = functions::help::help();
     valid_request(run)
+}
+
+fn loadtest(req: HttpRequest, address: SocketAddr) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+    if req.method != "GET" {
+        return Ok(HttpResponse::basic(405));
+    }
+
+    let tasks = req.params.get("tasks");
+    let sleep = req.params.get("sleep");
+
+    if !(tasks.is_some() && sleep.is_some()) {
+        return Ok(invalid_request("Invalid query params provided!".to_string()));
+    }
+
+    let tasks = tasks.unwrap().parse::<u64>();
+    let sleep = sleep.unwrap().parse::<u64>();
+
+    if let Err(_) = tasks {
+        return Ok(invalid_request("Unable to parse tasks!".to_string()));
+    }
+
+    if let Err(_) = sleep {
+        return Ok(invalid_request("Unable to parse sleep!".to_string()));
+    }
+
+    let tasks = tasks.unwrap();
+    let sleep = sleep.unwrap();
+
+    let request = format!("GET /sleep?seconds={sleep} HTTP/1.1 \r\n\r\n");
+    
+    for _ in 0..tasks {
+        let mut stream = TcpStream::connect(address)?;
+        let _ = stream.write_all(request.as_bytes())?;
+    }
+
+    let contents = format!("{tasks} sleep tasks with a duration of {sleep} seconds were spawned");
+    Ok(valid_request(contents))
 }
 
 fn random(req: HttpRequest) -> HttpResponse {
