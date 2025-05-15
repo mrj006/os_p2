@@ -1,11 +1,12 @@
 mod request;
 mod response;
 mod parser;
+mod routes;
 
 use std::{collections::HashMap, io::Write, net::{SocketAddr, TcpListener, TcpStream}};
-
 use response::HttpResponse;
 
+use crate::pool;
 use crate::errors::{self, *};
 
 use self::parser::parse;
@@ -14,16 +15,31 @@ pub fn create_server(port: u16) {
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(address);
 
+    // At this point, we couldn't bind the address, so we panic the project
     if let Err(e) = listener {
         log_error(Box::new(e));
         panic!("Unrecoverable error! Check logs.");
     }
 
+    let pool = pool::threadpool::ThreadPool::build(4);
+
+    // At this point, we couldn't start the thread pool, so we panic the project
+    if let Err(e) = pool {
+        log_error(e);
+        panic!("Unrecoverable error! Check logs.");
+    }
+
+    let pool = pool.unwrap();
+
+    // WE can safely unwrap the listener as the errors are already handled
     for stream in listener.unwrap().incoming() {
+        // We can ignore stream errors as we wouldn't be able to do anything
         if stream.is_ok() {
-            if let Err(e) = handle_requests(stream.unwrap()) {
-                log_error(e);
-            }
+            pool.execute(|| {
+                if let Err(e) = handle_requests(stream.unwrap()) {
+                    log_error(e);
+                }
+            });
         }
     }
 }
@@ -35,42 +51,31 @@ fn handle_requests(req: TcpStream) -> Result<(), Box<dyn std::error::Error>> {
     // Error handling based on error type
     if let Err(e) = &message {
         if e.is::<errors::parse::ParseUriError>() {
-            return send_response(req, version, 400, HashMap::new(), "".to_string());
+            let res = HttpResponse::new(version, 400, HashMap::new(), "".to_string());
+            return send_response(req, res);
         }
 
         if e.is::<errors::implement::ImplementationError>() {
-            return send_response(req, version, 501, HashMap::new(), "".to_string());
+            let res = HttpResponse::new(version, 501, HashMap::new(), "".to_string());
+            return send_response(req, res);
         } else {
-            return send_response(req, version, 500, HashMap::new(), "".to_string());
+            let res = HttpResponse::new(version, 500, HashMap::new(), "".to_string());
+            return send_response(req, res);
         }
     }
 
-    //Call method handler and check for errors
-    send_response(req, version, 200, HashMap::new(), "".to_string())
+    let res = routes::handle_route(message.unwrap());
+
+    if let Err(_) = res {
+        let res = HttpResponse::basic(500);
+        return send_response(req, res);
+    }
+
+    send_response(req, res.unwrap())
 }
 
-fn send_response(mut req: TcpStream, version: String, status: u16, headers: HashMap<String, String>, contents: String)
+fn send_response(mut req: TcpStream, res: HttpResponse)
     -> Result<(), Box<dyn std::error::Error>> {
-    let reason = (match status {
-        200 => "OK",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        408 => "Request Timeout",
-        500 => "Internal Server Error",
-        501 => "Not Implemented",
-        _ => "Internal Server Error"
-    }).to_string();
 
-    let response = HttpResponse {
-        version,
-        status,
-        reason,
-        headers,
-        contents,
-    };
-
-    Ok(req.write_all(format!("{response}").as_bytes())?)
+    Ok(req.write_all(format!("{res}").as_bytes())?)
 }
