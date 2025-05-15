@@ -30,6 +30,8 @@ impl HttpResponse {
             404 => "Not Found",
             405 => "Method Not Allowed",
             501 => "Not Implemented",
+            505 => "HTTP Version Not Supported",
+            507 => "Insufficient Storage (WebDAV; RFC 4918)",
             _ => "Internal Server Error"
         }).to_string()
     }
