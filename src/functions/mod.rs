@@ -18,7 +18,7 @@ mod tests {
 
     #[test]
     fn file() {
-        let name = "test";
+        let name = "test1";
         let content = "Hello World!\n";
         let repeat: u64 = 5;
 
@@ -26,7 +26,7 @@ mod tests {
 
         let file = fs::OpenOptions::new()
             .read(true)
-            .open("test")
+            .open(name)
             .unwrap();
 
         assert_eq!(content.len() as u64 * repeat, file.metadata().unwrap().len());
@@ -42,7 +42,12 @@ mod tests {
         let repeat: u64 = 5;
 
         createfile::createfile(name, content, repeat).unwrap();
-        createfile::createfile(name, content, repeat).unwrap();
+        let result = createfile::createfile(name, content, repeat);
+
+        if let Err(_) = result {
+            let _ = deletefile::deletefile(name);
+            panic!();
+        }
     }
 
     #[test]

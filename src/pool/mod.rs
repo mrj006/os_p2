@@ -21,6 +21,9 @@ mod tests {
             pool.execute(test);
         }
 
+        drop(pool);
+
+        assert!(true);
     }
 
     #[test]
@@ -32,7 +35,8 @@ mod tests {
         status.update_worker(1002, true, "test".to_string());
 
         let json = status.status();
+        let res: Vec<&str> = json.split(&['\"'][..]).collect();
 
-        println!("{}", json);
+        assert_eq!(39, res.len());
     }
 }
