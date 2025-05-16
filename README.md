@@ -2,23 +2,30 @@
 
 ## Requisitos del Sistema
 
-Sistema Operativo:
-GNU/Linux (recomendado Debian/Ubuntu)
+### Sistema Operativo
 
-Dependencias:
-Rust Y Cargo
+El proyecto se desarrolló con un diseño para ser ejecutado en GNU/Linux. No obstante,
+ se observó que el proyecto se ejecuta apropiadamente en sistemas MacOS y Windows.
+
+### Dependencias
+
+El proyecto está escrito para ser compilado en Rust edición 2024 (versión 1.85.0).
+ Adicionalmente, es requerido cargo, el package manager del lenguaje.
 
 ## Instalación
 
-1) Clonar el repositorio
+1. Clonar el repositorio
 
-2) Instalar Rust: 
+2. Instalar Rust:
+
 ```bash
 curl https://sh.rustup.rs -sSf | sh
 ```
-3) Recargar la terminal
 
-4) Compilar el proyecto:
+3. Recargar la terminal
+
+4. Compilar el proyecto:
+
 ```bash
 cargo build --release
 ```
@@ -26,9 +33,11 @@ cargo build --release
 ## Ejecutar el Proyecto
 
 Ejecutar el servidor:
+
 ```bash
 cargo run
 ```
+
 El servidor se iniciará por defecto en el puerto 7878 y escuchará peticiones entrantes
 
 ## Uso del servidor
@@ -50,7 +59,6 @@ El servidor se iniciará por defecto en el puerto 7878 y escuchará peticiones e
 | `/loadtest?tasks=n&sleep=s`                     | Ejecuta n tareas de sleep(s) controladas por hilo |
 | `/help`                                         | Lista todos los comandos disponibles              |
 
-
 ### Ejecución de pruebas con Postman
 
 Esta colección contiene pruebas para cada uno de los 12 endpoints implementados por el servidor, incluyendo:
@@ -61,9 +69,13 @@ Esta colección contiene pruebas para cada uno de los 12 endpoints implementados
 
 Se debe de ejecutar los comandos de la colección manualmente o por medio del comando "Runner", asegurandose de que el servidor este corriendo.
 
-## Estructura del Código
+## Detalles del proyecto
 
-El proyecto está organizado de forma modular para facilitar la lectura, mantenimiento y pruebas. A continuación se describe cada componente clave de la arquitectura:
+El proyecto está organizado de forma modular para facilitar la lectura, mantenimiento y pruebas.
+
+### Arquitectura
+
+El proyecto consiste de 5 módulos principales. A continuación se describe cada componente clave de la arquitectura:
 
 #### /src
 
@@ -127,3 +139,12 @@ Contiene los tipos y manejadores de errores definidos para distintas etapas del 
 
 Archivo de configuración del proyecto en Rust. Define las dependencias, el nombre del paquete y la versión del compilador utilizada.
 
+### Dependencias
+
+Se utilizaron librerías externas para ciertas funcionalidades fuera del objetivo
+ del proyecto. Las mismas serían:
+
+- chrono: usado para la generación de timestamp en formato ISO-8601.
+- gettid: usado para obtener el PID del sistema operativo de cada hilo.
+- rand: usado para la generación de números aleatorios.
+- sha256: usado para generar hashes usando dicha función criptográfica.
