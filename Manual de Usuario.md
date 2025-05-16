@@ -37,7 +37,7 @@ El servidor se iniciará por defecto en el puerto 7878 y escuchará peticiones e
 
 El proyecto está organizado de forma modular para facilitar la lectura, mantenimiento y pruebas. A continuación se describe cada componente clave de la arquitectura:
 
-####/src
+#### /src
 
 Contiene todo el código fuente del proyecto.
 
