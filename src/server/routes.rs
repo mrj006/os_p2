@@ -6,6 +6,8 @@ use crate::{functions, pool::status::Status};
 pub fn handle_route(req: HttpRequest, port: u16, status_clone: Arc<Mutex<Status>>) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Basedon parsing logic, the vecotr will always have at least 1 item
     let base_uri = req.uri[0].as_str();
+    let pid = gettid::gettid();
+    status_set_command(Arc::clone(&status_clone), pid, base_uri.to_string());
 
     match base_uri {
         "createfile" => createfile(req),
@@ -341,4 +343,19 @@ fn invalid_request(contents: String) -> HttpResponse {
 fn valid_request(contents: String) -> HttpResponse {
     let res = HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents);
     res
+}
+
+fn status_set_command(status: Arc<Mutex<Status>>, pid: u64, command: String) {
+    let mut status = status.lock();
+
+    // If a thread panic'd, we could 'unwrap' the error and re-acquire
+    // the lock
+    if let Err(error) = status {
+        let data = error.into_inner();
+        status = Ok(data);
+    }
+
+    // We can safely unwrap the guard as we already handled the poison
+    let mut status = status.unwrap();
+    status.update_worker(pid, true, command);
 }
