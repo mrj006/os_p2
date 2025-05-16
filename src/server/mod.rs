@@ -3,11 +3,12 @@ mod response;
 mod parser;
 mod routes;
 
-use std::{io::Write, net::{SocketAddr, TcpListener, TcpStream}, sync::{Arc, Mutex}};
+use std::{io::Write, net::{SocketAddr, TcpListener, TcpStream}};
 use response::HttpResponse;
 
-use crate::pool::{self, status::Status};
 use crate::errors::{self, *};
+use crate::pool;
+use crate::status::status;
 
 use self::parser::parse;
 
@@ -21,10 +22,9 @@ pub fn create_server(port: u16) {
         panic!("Unrecoverable error! Check logs.");
     }
 
-    let status = pool::status::Status::new(gettid::gettid());
-    let status = Arc::new(Mutex::new(status));
+    let _ = status::new(gettid::gettid());
 
-    let pool = pool::threadpool::ThreadPool::build(4, Arc::clone(&status));
+    let pool = pool::threadpool::ThreadPool::build(4);
 
     // At this point, we couldn't start the thread pool, so we panic the project
     if let Err(e) = pool {
@@ -38,9 +38,8 @@ pub fn create_server(port: u16) {
     for stream in listener.unwrap().incoming() {
         // We can ignore stream errors as we wouldn't be able to do anything
         if stream.is_ok() {
-            let status = Arc::clone(&status);
             pool.execute(move || {
-                if let Err(e) = handle_requests(stream.unwrap(), port, status) {
+                if let Err(e) = handle_requests(stream.unwrap(), port) {
                     log_error(e);
                 }
             });
@@ -48,7 +47,7 @@ pub fn create_server(port: u16) {
     }
 }
 
-fn handle_requests(req: TcpStream, port: u16, status: Arc<Mutex<Status>>) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_requests(req: TcpStream, port: u16) -> Result<(), Box<dyn std::error::Error>> {
     let version = "HTTP/1.1".to_string();
     let message = parse(&req);
 
@@ -75,7 +74,7 @@ fn handle_requests(req: TcpStream, port: u16, status: Arc<Mutex<Status>>) -> Res
             return send_response(req, res);
     }
 
-    let res = routes::handle_route(message, port, status);
+    let res = routes::handle_route(message, port);
 
     if let Err(_) = res {
         let res = HttpResponse::basic(500);

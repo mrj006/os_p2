@@ -1,12 +1,14 @@
 use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}, sync::{Arc, Mutex}};
 
 use super::{request::HttpRequest, response::HttpResponse};
-use crate::{functions, pool::status::Status};
+use crate::{functions, status::status::{self, Status}};
 
-pub fn handle_route(req: HttpRequest, port: u16, status_clone: Arc<Mutex<Status>>) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Based on parsing logic, the vector will always have at least 1 item
     let base_uri = req.uri[0].as_str();
     let pid = gettid::gettid();
+    let status_clone = status::new(0);
+
     status_set_command(Arc::clone(&status_clone), pid, base_uri.to_string());
 
     match base_uri {
@@ -358,4 +360,5 @@ fn status_set_command(status: Arc<Mutex<Status>>, pid: u64, command: String) {
     // We can safely unwrap the guard as we already handled the poison
     let mut status = status.unwrap();
     status.update_worker(pid, true, command);
+    status.increase_requests_handled();
 }

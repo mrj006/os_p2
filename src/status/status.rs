@@ -1,6 +1,8 @@
-use std::{collections::HashMap, time::SystemTime};
+use std::{collections::{hash_map::Entry, HashMap}, sync::{Arc, LazyLock, Mutex}, time::SystemTime};
 
 use chrono::{self, DateTime, Utc};
+
+static STATUS: LazyLock<Arc<Mutex<Status>>> = LazyLock::new(|| build());
 
 pub struct Status {
     start_time: SystemTime,
@@ -9,8 +11,40 @@ pub struct Status {
     workers: HashMap<u64, Worker>,
 }
 
+pub fn new(pid: u64) -> Arc<Mutex<Status>> {
+    let status_mutex = Arc::clone(&*STATUS);
+    
+    // We update the main pid before returning the "new" instance only if
+    // the pid = 0, meaning this is the first time the function is run
+    update_pid(Arc::clone(&status_mutex), pid);
+
+    status_mutex
+}
+
+fn build() -> Arc<Mutex<Status>> {
+    Arc::new(Mutex::new(Status::new(0)))
+}
+
+fn update_pid(status: Arc<Mutex<Status>>, pid: u64) {
+    let mut status = status.lock();
+
+    // If a thread panic'd, we could 'unwrap' the error and re-acquire
+    // the lock
+    if let Err(error) = status {
+        let data = error.into_inner();
+        status = Ok(data);
+    }
+
+    // We can safely unwrap the guard as we already handled the poison
+    let mut status = status.unwrap();
+
+    if status.get_pid() == 0 {
+        status.update_pid(pid);
+    }
+}
+
 impl Status {
-    pub fn new(pid: u64) -> Status {
+    fn new(pid: u64) -> Status {
         let start_time = SystemTime::now();
         let requests_handled: u128 = 0;
         let workers: HashMap<u64, Worker> = HashMap::new();
@@ -18,22 +52,30 @@ impl Status {
         Status { start_time, pid, requests_handled, workers }
     }
 
+    fn get_pid(&self) -> u64 {
+        self.pid
+    }
+
+    fn update_pid(&mut self, pid: u64) {
+        self.pid = pid;
+    }
+
     pub fn increase_requests_handled(&mut self) {
         self.requests_handled += 1;
     }
 
-    pub fn add_worker(&mut self, pid: u64) {
-        // We check the entry does not exist to avoid overwritting
-        if !self.workers.contains_key(&pid) {
-            let worker = Worker {pid, busy: false, command: "".to_string() };
-            self.workers.insert(pid, worker);
-        }
-    }
-
     pub fn update_worker(&mut self, pid: u64, busy: bool, command: String) {
-        let worker = self.workers.get_mut(&pid).unwrap();
-        worker.busy = busy;
-        worker.command = command;
+        match self.workers.entry(pid) {
+            Entry::Occupied(mut occupied_entry) => {
+                let worker = occupied_entry.get_mut();
+                worker.busy = busy;
+                worker.command = command;
+            },
+            Entry::Vacant(vacant_entry) => {
+                let worker = Worker { pid, busy, command };
+                vacant_entry.insert(worker);
+            },
+        }
     }
 
     pub fn status(&self) -> String {
