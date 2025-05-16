@@ -45,6 +45,7 @@ impl ThreadPool {
 }
 
 // Implementing dropping trait for graceful shutdown, if required
+// This makes sure the on-going job is completed before dropping the worker
 impl Drop for ThreadPool {
     fn drop(&mut self) {
         drop(self.sender.take());

@@ -4,7 +4,7 @@ use super::{request::HttpRequest, response::HttpResponse};
 use crate::{functions, pool::status::Status};
 
 pub fn handle_route(req: HttpRequest, port: u16, status_clone: Arc<Mutex<Status>>) -> Result<HttpResponse, Box<dyn std::error::Error>> {
-    // Basedon parsing logic, the vecotr will always have at least 1 item
+    // Based on parsing logic, the vector will always have at least 1 item
     let base_uri = req.uri[0].as_str();
     let pid = gettid::gettid();
     status_set_command(Arc::clone(&status_clone), pid, base_uri.to_string());

@@ -23,6 +23,7 @@ impl Status {
     }
 
     pub fn add_worker(&mut self, pid: u64) {
+        // We check the entry does not exist to avoid overwritting
         if !self.workers.contains_key(&pid) {
             let worker = Worker {pid, busy: false, command: "".to_string() };
             self.workers.insert(pid, worker);
@@ -40,6 +41,9 @@ impl Status {
         let now: DateTime<Utc> = SystemTime::now().into();
         let run_time = now.signed_duration_since(start_time);
 
+        // Given the functions don't check the "carry over points" for the time
+        // measure, we need to use the remainder operator to avoid output like
+        // 1 minutes 110 seconds
         let mut run_string = String::new();
         let days = run_time.num_days() % 7;
         let hours = run_time.num_hours() % 24;
@@ -86,6 +90,8 @@ impl Status {
                 workers += ",";
             }
 
+            // Given the last item will have a comma, and it's prohibited in a
+            // JSON, we slice the string to trim it
             let workers = workers[0..workers.len() - 1].to_string();
 
             let workers = format!(
