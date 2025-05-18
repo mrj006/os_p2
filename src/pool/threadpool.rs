@@ -67,21 +67,7 @@ impl Worker {
         let builder = thread::Builder::new();
         let thread = builder.spawn(move || {
             let pid = gettid::gettid();
-            let status = status::new(0);
-
-            let mut status = status.lock();
-
-            // If a thread panic'd, we could 'unwrap' the error and re-acquire
-            // the lock
-            if let Err(error) = status {
-                let data = error.into_inner();
-                status = Ok(data);
-            }
-
-            // We can safely unwrap the guard as we already handled the poison
-            let mut status = status.unwrap();
-            status.update_worker(pid, false, "".to_string());
-            drop(status);
+            status::update_worker(pid, false, "".to_string());
 
             loop {
                 let mut message = receiver.lock();
@@ -107,6 +93,7 @@ impl Worker {
                 // The double parenthesis means we are callin the boxed function
                 message.unwrap()();
                 println!("Worker {id} finished!");
+                status::update_worker(pid, false, "".to_string());
             }
         })?;
         Ok(Worker { id, thread })

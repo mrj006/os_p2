@@ -22,7 +22,7 @@ pub fn create_server(port: u16) {
         panic!("Unrecoverable error! Check logs.");
     }
 
-    let _ = status::new(gettid::gettid());
+    status::update_main_pid(gettid::gettid());
 
     let pool = pool::threadpool::ThreadPool::build(4);
 

@@ -1,15 +1,14 @@
-use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}, sync::{Arc, Mutex}};
+use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}};
 
 use super::{request::HttpRequest, response::HttpResponse};
-use crate::{functions, status::status::{self, Status}};
+use crate::{functions, status::status};
 
 pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Based on parsing logic, the vector will always have at least 1 item
     let base_uri = req.uri[0].as_str();
     let pid = gettid::gettid();
-    let status_clone = status::new(0);
-
-    status_set_command(Arc::clone(&status_clone), pid, base_uri.to_string());
+    status::update_worker(pid, true, base_uri.to_string());
+    status::increase_requests_handled();
 
     match base_uri {
         "createfile" => createfile(req),
@@ -22,7 +21,7 @@ pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn
         "reverse" => Ok(reverse(req)),
         "simulate" => Ok(simulate(req)),
         "sleep" => Ok(sleep(req)),
-        "status" => Ok(status(req, status_clone)),
+        "status" => Ok(status(req)),
         "timestamp" => Ok(timestamp(req)),
         "toupper" => Ok(toupper(req)),
         _ => Ok(HttpResponse::basic(404))
@@ -283,26 +282,12 @@ fn sleep(req: HttpRequest) -> HttpResponse {
     valid_request(run)
 }
 
-fn status(req: HttpRequest, status: Arc<Mutex<Status>>) -> HttpResponse {
+fn status(req: HttpRequest) -> HttpResponse {
     if req.method != "GET" {
         return HttpResponse::basic(405);
     }
 
-    let mut status = status.lock();
-
-    // If a thread panic'd, we could 'unwrap' the error and re-acquire
-    // the lock
-    if let Err(error) = status {
-        let data = error.into_inner();
-        status = Ok(data);
-    }
-
-    // We can safely unwrap the guard as we already handled the poison
-    let status = status.unwrap();
-    let contents = status.status();
-
-    // We drop the status early to avoid delyaing other threads
-    drop(status);
+    let contents = status::status();
 
     let content_length = contents.len();
     let mut headers: HashMap<String, String> = HashMap::new();
@@ -345,20 +330,4 @@ fn invalid_request(contents: String) -> HttpResponse {
 fn valid_request(contents: String) -> HttpResponse {
     let res = HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents);
     res
-}
-
-fn status_set_command(status: Arc<Mutex<Status>>, pid: u64, command: String) {
-    let mut status = status.lock();
-
-    // If a thread panic'd, we could 'unwrap' the error and re-acquire
-    // the lock
-    if let Err(error) = status {
-        let data = error.into_inner();
-        status = Ok(data);
-    }
-
-    // We can safely unwrap the guard as we already handled the poison
-    let mut status = status.unwrap();
-    status.update_worker(pid, true, command);
-    status.increase_requests_handled();
 }

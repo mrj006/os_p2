@@ -11,21 +11,22 @@ pub struct Status {
     workers: HashMap<u64, Worker>,
 }
 
-pub fn new(pid: u64) -> Arc<Mutex<Status>> {
-    let status_mutex = Arc::clone(&*STATUS);
+// pub fn new(pid: u64) -> Arc<Mutex<Status>> {
+//     let status_mutex = Arc::clone(&*STATUS);
     
-    // We update the main pid before returning the "new" instance only if
-    // the pid = 0, meaning this is the first time the function is run
-    update_pid(Arc::clone(&status_mutex), pid);
+//     // We update the main pid before returning the "new" instance only if
+//     // the pid = 0, meaning this is the first time the function is run
+//     update_pid(Arc::clone(&status_mutex), pid);
 
-    status_mutex
-}
+//     status_mutex
+// }
 
 fn build() -> Arc<Mutex<Status>> {
     Arc::new(Mutex::new(Status::new(0)))
 }
 
-fn update_pid(status: Arc<Mutex<Status>>, pid: u64) {
+pub fn update_main_pid(pid: u64) {
+    let status = Arc::clone(&*STATUS);
     let mut status = status.lock();
 
     // If a thread panic'd, we could 'unwrap' the error and re-acquire
@@ -41,6 +42,54 @@ fn update_pid(status: Arc<Mutex<Status>>, pid: u64) {
     if status.get_pid() == 0 {
         status.update_pid(pid);
     }
+}
+
+pub fn update_worker(pid: u64, busy: bool, command: String) {
+    let status = Arc::clone(&*STATUS);
+    let mut status = status.lock();
+
+    // If a thread panic'd, we could 'unwrap' the error and re-acquire
+    // the lock
+    if let Err(error) = status {
+        let data = error.into_inner();
+        status = Ok(data);
+    }
+
+    // We can safely unwrap the guard as we already handled the poison
+    let mut status = status.unwrap();
+    status.update_worker(pid, busy, command);
+}
+
+pub fn increase_requests_handled() {
+    let status = Arc::clone(&*STATUS);
+    let mut status = status.lock();
+
+    // If a thread panic'd, we could 'unwrap' the error and re-acquire
+    // the lock
+    if let Err(error) = status {
+        let data = error.into_inner();
+        status = Ok(data);
+    }
+
+    // We can safely unwrap the guard as we already handled the poison
+    let mut status = status.unwrap();
+    status.increase_requests_handled();
+}
+
+pub fn status() -> String {
+    let status = Arc::clone(&*STATUS);
+    let mut status = status.lock();
+
+    // If a thread panic'd, we could 'unwrap' the error and re-acquire
+    // the lock
+    if let Err(error) = status {
+        let data = error.into_inner();
+        status = Ok(data);
+    }
+
+    // We can safely unwrap the guard as we already handled the poison
+    let status = status.unwrap();
+    status.status()
 }
 
 impl Status {
@@ -60,11 +109,11 @@ impl Status {
         self.pid = pid;
     }
 
-    pub fn increase_requests_handled(&mut self) {
+    fn increase_requests_handled(&mut self) {
         self.requests_handled += 1;
     }
 
-    pub fn update_worker(&mut self, pid: u64, busy: bool, command: String) {
+    fn update_worker(&mut self, pid: u64, busy: bool, command: String) {
         match self.workers.entry(pid) {
             Entry::Occupied(mut occupied_entry) => {
                 let worker = occupied_entry.get_mut();
