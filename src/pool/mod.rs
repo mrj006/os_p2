@@ -21,4 +21,10 @@ mod tests {
 
         assert!(true);
     }
+
+    #[test]
+    #[should_panic]
+    fn pool_size_error() {
+        threadpool::ThreadPool::build(0).unwrap();
+    }
 }

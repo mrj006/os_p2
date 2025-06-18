@@ -90,7 +90,7 @@ impl Worker {
                 }
                 println!("Worker {id} working...");
 
-                // The double parenthesis means we are callin the boxed function
+                // The double parenthesis means we are calling the boxed function
                 message.unwrap()();
                 println!("Worker {id} finished!");
                 status::update_worker(pid, false, "".to_string());

@@ -53,11 +53,9 @@ fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     match functions::createfile::createfile(name, content, repeat) {
         Ok(_) => Ok(HttpResponse::basic(200)),
         Err(e) => {
-            // Comprobamos si el error fue porque ya existía
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 return Ok(invalid_request("File already exists!".to_string()));
             } else {
-                // Cualquier otro error es 500 interno
                 return Ok(HttpResponse::basic(500));
             }
         }

@@ -18,9 +18,11 @@ impl HttpResponse {
     }
 
     pub fn basic(status: u16) -> HttpResponse {
-        let reason = Self::reason_from_status(status);
+        let version = "HTTP/1.1".to_string();
+        let headers = HashMap::new();
+        let contents = "".to_string();
 
-        HttpResponse { version: "HTTP/1.1".to_string(), status, reason, headers: HashMap::new(), contents: "".to_string() }
+        Self::new(version, status, headers, contents)
     }
 
     fn reason_from_status(status: u16) -> String {

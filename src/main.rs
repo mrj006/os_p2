@@ -5,5 +5,5 @@ mod pool;
 mod status;
 
 fn main() {
-    server::create_server(7878);
+    server::server::create_server(7878);
 }

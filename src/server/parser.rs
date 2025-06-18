@@ -14,10 +14,10 @@ pub fn parse(mut message: &TcpStream) -> Result<HttpRequest, Box<dyn std::error:
     let headers = parse_headers(&mut buf_reader);
     let body = parse_body(&mut buf_reader, &headers)?;
 
-    Ok(HttpRequest { method, uri, params, version, headers, body })
+    Ok(HttpRequest::new(method, uri, params, version, headers, body))
 }
 
-// This functtion parses the 1st line of the http message,
+// This function parses the 1st line of the http message,
 // returning the method, version, URI and query parameters used.
 fn parse_request_line(buf_reader: &mut BufReader<&mut &TcpStream>)
     -> Result<(String, Vec<String>, HashMap<String, String>, String), parse::ParseUriError> {

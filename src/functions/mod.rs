@@ -31,7 +31,7 @@ mod tests {
 
         assert_eq!(content.len() as u64 * repeat, file.metadata().unwrap().len());
 
-        deletefile::deletefile(name).unwrap();
+        std::fs::remove_file(name).unwrap();
     }
 
     #[test]
@@ -57,7 +57,27 @@ mod tests {
     }
 
     #[test]
-    fn fibonacci() {
+    fn deletefile_success() {
+        let name = "delete_file_tests";
+        std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(name).unwrap();
+
+        deletefile::deletefile(name).unwrap();
+
+        assert!(true);
+    }
+
+    #[test]
+    #[should_panic]
+    fn fibonacci_error() {
+        let result = fibonacci::fibonacci(0);
+        assert_ne!(0, result.unwrap());
+    }
+
+    #[test]
+    fn fibonacci_success() {
         let result = fibonacci::fibonacci(0);
         assert_eq!(0, result.unwrap());
 
@@ -69,12 +89,16 @@ mod tests {
     }
 
     #[test]
-    fn hash() {
+    #[should_panic]
+    fn hash_error() {
+        let result = hash::hash("Hello");
+        assert_eq!(result, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
+    }
+
+    #[test]
+    fn hash_success() {
         let result = hash::hash("hello");
         assert_eq!(result, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
-
-        let result = hash::hash("Hello");
-        assert_ne!(result, "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824");
     }
 
     #[test]
@@ -100,12 +124,47 @@ mod tests {
         }
     }
 
+    #[test]
+    #[should_panic]
+    fn random_minmax_error() {
+        use crate::functions::random;
+
+        let count = 5;
+        let min = 10;
+        let max = 9;
+
+        let result = random::random(count, min, max);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    #[should_panic]
+    fn random_count_error() {
+        use crate::functions::random;
+
+        let count = 5;
+        let min = 10;
+        let max = 11;
+
+        let result = random::random(count, min, max);
+        assert!(result.is_ok());
+
+        let vector = result.unwrap();
+        assert_ne!(count, vector.len());
+    }
 
     #[test]
     fn reverse() {
         let result = reverse::reverse("HeLlO");
         assert_eq!("OlLeH", result);
         assert_ne!("olleh", result);
+    }
+
+    #[test]
+    #[should_panic]
+    fn reverse_case_error() {
+        let result = reverse::reverse("HeLlO");
+        assert_ne!("OlLeH", result);
     }
 
     #[test]
