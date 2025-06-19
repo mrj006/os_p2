@@ -2,6 +2,7 @@ use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}}
 
 use super::{request::HttpRequest, response::HttpResponse};
 use crate::{functions, status::status};
+use crate::{distributed::{count_partial, count_total}};
 
 pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Based on parsing logic, the vector will always have at least 1 item
@@ -24,6 +25,8 @@ pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn
         "status" => Ok(status(req)),
         "timestamp" => Ok(timestamp(req)),
         "toupper" => Ok(toupper(req)),
+        "countpartial" => Ok(count_partial(req)),
+        "counttotal" => Ok(count_total(req)),
         _ => Ok(HttpResponse::basic(404))
     }
 }
@@ -319,6 +322,75 @@ fn toupper(req: HttpRequest) -> HttpResponse {
     let run = functions::toupper::toupper(text);
     valid_request(run)
 }
+
+fn count_partial(req: HttpRequest) -> HttpResponse {
+    // Validamos método HTTP
+    if req.method != "GET" {
+        return HttpResponse::basic(405);
+    }
+
+    // Extraemos parámetros de la URL
+    let Some(name) = req.params.get("name") else {
+        return invalid_request("Missing parameter: name".to_string());
+    };
+    let Some(part) = req.params.get("part") else {
+        return invalid_request("Missing parameter: part".to_string());
+    };
+    let Some(total) = req.params.get("total") else {
+        return invalid_request("Missing parameter: total".to_string());
+    };
+
+    // Convertimos parámetros a números
+    let Ok(part_index) = part.parse::<usize>() else {
+        return invalid_request("Invalid value for 'part'".to_string());
+    };
+    let Ok(total_parts) = total.parse::<usize>() else {
+        return invalid_request("Invalid value for 'total'".to_string());
+    };
+
+    // Armamos ruta al archivo y leemos el contenido
+    let filepath = format!("archivos/{}", name);
+    let Ok(contenido) = std::fs::read_to_string(&filepath) else {
+        return invalid_request("Could not read file".to_string());
+    };
+
+    // Extraemos el subtexto correspondiente y contamos palabras
+    let sub = count_partial::obtener_rango_particion(&contenido, part_index, total_parts);
+    let count = count_partial::contar_palabras(&sub);
+
+    // Armamos respuesta como string
+    let resultado = format!("archivo={},palabras={}", name, count);
+    valid_request(resultado)
+}
+
+fn count_total(req: HttpRequest) -> HttpResponse {
+    if req.method != "GET" {
+        return HttpResponse::basic(405);
+    }
+
+    let Some(name) = req.params.get("name") else {
+        return invalid_request("Missing parameter: name".to_string());
+    };
+    let Some(results_str) = req.params.get("results") else {
+        return invalid_request("Missing parameter: results".to_string());
+    };
+
+    // Convertimos string "3,4,2" en vector [3,4,2]
+    let resultados: Option<Vec<usize>> = results_str
+        .split(',')
+        .map(|s| s.trim().parse::<usize>().ok())
+        .collect();
+
+    let Some(valores) = resultados else {
+        return invalid_request("Invalid format for 'results'".to_string());
+    };
+
+    let suma = count_total::unir_resultados(&valores);
+    let respuesta = format!("archivo={},total_palabras={}", name, suma);
+    valid_request(respuesta)
+}
+
+
 
 fn invalid_request(contents: String) -> HttpResponse {
     let res = HttpResponse::new("HTTP/1.1".to_string(), 400, HashMap::new(), contents);
