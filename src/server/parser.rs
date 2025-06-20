@@ -148,11 +148,9 @@ fn parse_urlencoded(content: String) -> HashMap<String, String> {
 
     // This encoding has key-value pairs joined by &
     for pair in content.split("&") {
-        if let Some(pos) = pair.find('=') {
-            let key = &pair[..pos];
-            let value = &pair[pos+1..];
-            parsed.insert(key.to_string(), value.to_string());
-        }
+        // The key-value pair is delimited by an equal char
+        let pair: Vec<&str> = pair.split("=").collect();
+        parsed.insert(pair[0].to_string(), pair[1].to_string());
     }
 
     parsed
