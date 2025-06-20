@@ -352,16 +352,18 @@ fn count_partial(req: HttpRequest) -> HttpResponse {
 
     // Armamos ruta al archivo y leemos el contenido
     let filepath = format!("archivos/{}", name);
-    let Ok(contenido) = std::fs::read_to_string(&filepath) else {
+    let Ok(contenido) = std::fs::read_to_string(filepath) else {
         return invalid_request("Could not read file".to_string());
     };
 
-    // Extraemos el subtexto correspondiente y contamos palabras
-    let sub = count_partial::obtener_rango_particion(&contenido, part_index, total_parts);
-    let count = count_partial::contar_palabras(&sub);
+    let count = count_partial::contar_palabras(contenido, part_index, total_parts);
+
+    if let Err(e) = count {
+        return invalid_request(e);
+    }
 
     // Armamos respuesta como string
-    let resultado = format!("archivo={},palabras={}", name, count);
+    let resultado = format!("archivo={},palabras={}", name, count.unwrap());
     valid_request(resultado)
 }
 

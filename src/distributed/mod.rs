@@ -3,6 +3,20 @@ pub mod count_total;
 pub mod matrix_partial;
 pub mod matrix_total;
 
-pub use count_partial::{contar_palabras, obtener_rango_particion};
-pub use count_total::unir_resultados;
-pub use matrix_total::{calcular_dimensiones_resultado, construir_matriz_resultado, matriz_a_json};
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    #[test]
+    fn count() {
+        let file = fs::read_to_string("archivos/counttest.txt").unwrap();
+        let res = count_partial::contar_palabras(file.clone(), 0, 3);
+        assert_eq!(10, res.unwrap());
+        let res = count_partial::contar_palabras(file.clone(), 1, 3);
+        assert_eq!(7, res.unwrap());
+        let res = count_partial::contar_palabras(file.clone(), 2, 3);
+        assert_eq!(6, res.unwrap());
+    }
+}
