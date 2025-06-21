@@ -3,6 +3,7 @@ use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}}
 use super::{request::HttpRequest, response::HttpResponse};
 use crate::{functions, status::status};
 use crate::{distributed::{count_partial, count_total, matrix_partial, matrix_total}};
+use crate::distributed::matrix_partial::ResultadoCelda;
 
 pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Based on parsing logic, the vector will always have at least 1 item
@@ -449,21 +450,18 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
     }
 
     // Extraer parámetros
-    let matriz_a_str = match req.params.get("matriz_a") {
-        Some(s) => s,
-        None => return invalid_request("Missing parameter: matriz_a".to_string()),
-    };
-    let matriz_b_str = match req.params.get("matriz_b") {
-        Some(s) => s,
-        None => return invalid_request("Missing parameter: matriz_b".to_string()),
-    };
-    let results_str = match req.params.get("results") {
-        Some(s) => s,
-        None => return invalid_request("Missing parameter: results".to_string()),
-    };
-    
-    // Parsear las matrices
-    let (matriz_a, matriz_b) = match matrix_partial::parse_matrices(matriz_a_str, matriz_b_str) {
+    let matriz_a_str = req.params.get("matriz_a").cloned().unwrap_or_default();
+    let matriz_b_str = req.params.get("matriz_b").cloned().unwrap_or_default();
+    let filas_str = req.params.get("filas").cloned().unwrap_or_default();
+    let columnas_str = req.params.get("columnas").cloned().unwrap_or_default();
+    let valores_str = req.params.get("valores").cloned().unwrap_or_default();
+
+    if matriz_a_str.is_empty() || matriz_b_str.is_empty() || filas_str.is_empty() || columnas_str.is_empty() || valores_str.is_empty() {
+        return invalid_request("Missing one or more required parameters: matriz_a, matriz_b, filas, columnas, valores".to_string());
+    }
+
+    // Parsear las matrices para obtener dimensiones
+    let (matriz_a, matriz_b) = match matrix_partial::parse_matrices(&matriz_a_str, &matriz_b_str) {
         Ok(matrices) => matrices,
         Err(e) => return invalid_request(format!("Invalid JSON for matrices: {}", e)),
     };
@@ -473,77 +471,24 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
         return invalid_request("Matrices are not compatible for multiplication".to_string());
     }
 
-    // Normalizar el parámetro results para evitar problemas de saltos de línea o espacios
-    let results_str = results_str.replace("\n", "").replace("\r", "").replace(" ", "");
-    println!("results_str normalizado: {:?}", results_str);
-    // Intentar parsear los resultados directamente
-    let mut resultados: Vec<matrix_partial::ResultadoCelda> = results_str
-        .split(';')
-        .filter_map(|celda_str| {
-            if celda_str.is_empty() { return None; }
-            let mut fila = 0;
-            let mut columna = 0;
-            let mut valor = 0;
-            let mut parts_count = 0;
-            for parte in celda_str.split(',') {
-                let kv: Vec<&str> = parte.split('=').collect();
-                println!("Parte: {:?}, kv: {:?}", parte, kv);
-                if kv.len() == 2 {
-                    match kv[0].trim() {
-                        "fila" => { fila = kv[1].trim().parse().unwrap_or(0); parts_count += 1; },
-                        "columna" => { columna = kv[1].trim().parse().unwrap_or(0); parts_count += 1; },
-                        "valor" => { valor = kv[1].trim().parse().unwrap_or(0); parts_count += 1; },
-                        _ => {}
-                    }
-                }
-            }
-            println!("Resultado parseado: fila={}, columna={}, valor={}, parts_count={}", fila, columna, valor, parts_count);
-            if parts_count == 3 {
-                Some(matrix_partial::ResultadoCelda { fila, columna, valor })
-            } else {
-                None
-            }
-        })
-        .collect();
+    // Parsear los resultados de las celdas
+    let filas_vec: Vec<usize> = filas_str.split(',').filter_map(|s| s.parse().ok()).collect();
+    let columnas_vec: Vec<usize> = columnas_str.split(',').filter_map(|s| s.parse().ok()).collect();
+    let valores_vec: Vec<i32> = valores_str.split(',').filter_map(|s| s.parse().ok()).collect();
 
-    // Si no se obtuvieron celdas válidas, intentar decodificar y volver a intentar
-    if resultados.is_empty() {
-        let mut decoded_results_str = matrix_partial::url_decode(&results_str);
-        decoded_results_str = decoded_results_str.replace("\n", "").replace("\r", "").replace(" ", "");
-        println!("results_str normalizado (dec): {:?}", decoded_results_str);
-        resultados = decoded_results_str
-            .split(';')
-            .filter_map(|celda_str| {
-                if celda_str.is_empty() { return None; }
-                let mut fila = 0;
-                let mut columna = 0;
-                let mut valor = 0;
-                let mut parts_count = 0;
-                for parte in celda_str.split(',') {
-                    let kv: Vec<&str> = parte.split('=').collect();
-                    println!("Parte (dec): {:?}, kv: {:?}", parte, kv);
-                    if kv.len() == 2 {
-                        match kv[0].trim() {
-                            "fila" => { fila = kv[1].trim().parse().unwrap_or(0); parts_count += 1; },
-                            "columna" => { columna = kv[1].trim().parse().unwrap_or(0); parts_count += 1; },
-                            "valor" => { valor = kv[1].trim().parse().unwrap_or(0); parts_count += 1; },
-                            _ => {}
-                        }
-                    }
-                }
-                println!("Resultado parseado (dec): fila={}, columna={}, valor={}, parts_count={}", fila, columna, valor, parts_count);
-                if parts_count == 3 {
-                    Some(matrix_partial::ResultadoCelda { fila, columna, valor })
-                } else {
-                    None
-                }
-            })
-            .collect();
+    if filas_vec.len() != columnas_vec.len() || filas_vec.len() != valores_vec.len() {
+        return invalid_request("The number of items in filas, columnas, and valores must be equal.".to_string());
     }
 
+    let resultados: Vec<ResultadoCelda> = filas_vec.into_iter()
+        .zip(columnas_vec.into_iter())
+        .zip(valores_vec.into_iter())
+        .map(|((fila, columna), valor)| ResultadoCelda { fila, columna, valor })
+        .collect();
+
     // Calcular dimensiones y construir la matriz final
-    let (filas, columnas) = matrix_total::calcular_dimensiones_resultado(&matriz_a, &matriz_b);
-    let matriz_resultado = matrix_total::construir_matriz_resultado(&resultados, filas, columnas);
+    let (filas_dim, columnas_dim) = matrix_total::calcular_dimensiones_resultado(&matriz_a, &matriz_b);
+    let matriz_resultado = matrix_total::construir_matriz_resultado(&resultados, filas_dim, columnas_dim);
 
     // Devolver el resultado como JSON
     let respuesta_json = matrix_total::matriz_a_json(&matriz_resultado);
