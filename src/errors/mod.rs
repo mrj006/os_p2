@@ -2,6 +2,7 @@ pub mod parse;
 pub mod server;
 pub mod implement;
 pub mod pool;
+pub mod matrix;
 
 use std::io::Write;
 use std::{fs, time::SystemTime};
