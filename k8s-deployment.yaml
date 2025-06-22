@@ -1,0 +1,111 @@
+# 1. Deployment y Service para redis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+      - name: redis
+        image: redis:alpine
+        ports:
+        - containerPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+spec:
+  selector:
+    app: redis
+  ports:
+  - protocol: TCP
+    port: 6379
+    targetPort: 6379
+
+---
+# 2. Deployment y Service para el master
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: master-deployment
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rust-server
+      role: master
+  template:
+    metadata:
+      labels:
+        app: rust-server
+        role: master
+    spec:
+      containers:
+      - name: master-container
+        # Reemplazar con el nombre de la imagen :) 
+        image: lmaagesen/os-p2-app:latest
+        ports:
+        - containerPort: 7878
+        env:
+        - name: PORT
+          value: "7878"
+        - name: APP_ROLE
+          value: "master"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: master-service
+spec:
+  type: LoadBalancer # Expone el servicio fuera del clúster
+  selector:
+    role: master
+  ports:
+  - protocol: TCP
+    port: 7878
+    targetPort: 7878
+
+---
+# 3. Deployment para los slaves
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: slave-deployment
+spec:
+  replicas: 3 # número de slaves
+  selector:
+    matchLabels:
+      app: rust-server
+      role: slave
+  template:
+    metadata:
+      labels:
+        app: rust-server
+        role: slave
+    spec:
+      containers:
+      - name: slave-container
+        # Reemplazar con el nombre de la imagen :) 
+        image: lmaagesen/os-p2-app:latest
+        ports:
+        - containerPort: 7878
+        env:
+        - name: PORT
+          value: "7878"
+        - name: APP_ROLE
+          value: "slave"
+        - name: MASTER_URL
+          value: "http://master-service:7878"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379" 
