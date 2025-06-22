@@ -1,8 +1,9 @@
+use serde_json::Value;
 use std::{
     collections::HashMap, io::{prelude::*, BufReader}, net::TcpStream
 };
 
-use super::request::HttpRequest;
+use super::request::{Body, HttpRequest};
 use crate::errors::*;
 
 // This function parses a valid http request message and returns a struct or
@@ -100,8 +101,8 @@ fn parse_headers(buf_reader: &mut BufReader<&mut &TcpStream>) -> HashMap<String,
     headers
 }
 
-fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<String, String>) -> Result<HashMap<String, String>, Box<dyn std::error::Error>> {
-    let mut body: HashMap<String, String> = HashMap::new();
+fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<String, String>) -> Result<Body, Box<dyn std::error::Error>> {
+    let mut body = Body::JSON(String::new());
 
     let content_length = headers.get("Content-Length");
 
@@ -125,10 +126,11 @@ fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<Str
     if content_type.is_none() {
         return Err(Box::new(parse::ParseUriError));
     }
-
+    
     // This unwrap shouldn't fail as we checked it and return early in the if above
-    // Currently, only this type of content can be parsed
-    if content_type.unwrap() != "application/x-www-form-urlencoded" {
+    let content_type = content_type.unwrap().to_string();
+
+    if content_type != "application/x-www-form-urlencoded" && content_type != "application/json" {
         return Err(Box::new(implement::ImplementationError));
     }
     
@@ -136,8 +138,19 @@ fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<Str
     let mut content: Vec<u8> = vec![];
     let mut buffer_to_read = buf_reader.take(content_length);
     let _ = buffer_to_read.read_to_end(&mut content);
+    let content = String::from_utf8(content)?;
 
-    body = parse_urlencoded(String::from_utf8(content)?);
+    if content_type == "application/json" {
+        // We don't attempt to parse it, as we only need to check whether the
+        // JSON is mal-formed or not
+        if let Err(_) = serde_json::from_str::<Value>(&content) {
+            return Err(Box::new(parse::ParseUriError));
+        }
+
+        body = Body::JSON(content);
+    } else {
+        body = Body::URLdec(());        
+    }
 
     Ok(body)
 }

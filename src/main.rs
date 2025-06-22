@@ -1,9 +1,10 @@
-mod server;
+mod distributed;
 mod errors;
 mod functions;
+mod models;
 mod pool;
+mod server;
 mod status;
-mod distributed;
 
 use std::env;
 

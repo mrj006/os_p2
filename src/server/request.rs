@@ -2,17 +2,23 @@ use std::fmt;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
+pub enum Body {
+    JSON(String),
+    URLdec(()),
+}
+
+#[derive(Debug, Clone)]
 pub struct HttpRequest {
     pub method: String,
     pub uri: Vec<String>,
     pub params: HashMap<String, String>,
     pub version: String,
     pub headers: HashMap<String, String>,
-    pub body: HashMap<String, String>,
+    pub body: Body,
 }
 
 impl HttpRequest {
-    pub fn new(method: String, uri: Vec<String>, params: HashMap<String, String>, version: String, headers: HashMap<String, String>, body: HashMap<String, String>) -> HttpRequest {
+    pub fn new(method: String, uri: Vec<String>, params: HashMap<String, String>, version: String, headers: HashMap<String, String>, body: Body) -> HttpRequest {
         HttpRequest {
             method,
             uri,
@@ -28,7 +34,7 @@ impl HttpRequest {
         let params = HashMap::<String,String>::new();
         let version = "1.1".to_string();
         let headers = HashMap::<String,String>::new();
-        let body = HashMap::<String,String>::new();
+        let body = Body::JSON(String::new());
 
         Self::new(method, uri, params, version, headers, body)
     }

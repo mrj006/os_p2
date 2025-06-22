@@ -1,4 +1,5 @@
-// Simplemente suma los valores del vector
-pub fn unir_resultados(resultados: &[usize]) -> usize {
-    resultados.iter().sum()
+use crate::models::count;
+
+pub fn count_join(values: count::CountJoinInput) -> usize {
+    values.values.iter().sum()
 }

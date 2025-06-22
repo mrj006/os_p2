@@ -1,9 +1,8 @@
 use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}};
 
 use super::{request::HttpRequest, response::HttpResponse};
-use crate::{functions, status::status};
-use crate::{distributed::{count_partial, count_total, matrix_partial, matrix_total}};
-use crate::distributed::matrix_partial::ResultadoCelda;
+use crate::{functions, models::{count, matrix}, server::request, status::status};
+use crate::{distributed};
 
 pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Based on parsing logic, the vector will always have at least 1 item
@@ -327,45 +326,43 @@ fn toupper(req: HttpRequest) -> HttpResponse {
 }
 
 fn count_partial(req: HttpRequest) -> HttpResponse {
-    // Validamos método HTTP
     if req.method != "GET" {
         return HttpResponse::basic(405);
     }
 
-    // Extraemos parámetros de la URL
     let Some(name) = req.params.get("name") else {
         return invalid_request("Missing parameter: name".to_string());
     };
+
     let Some(part) = req.params.get("part") else {
         return invalid_request("Missing parameter: part".to_string());
     };
+
     let Some(total) = req.params.get("total") else {
         return invalid_request("Missing parameter: total".to_string());
     };
 
-    // Convertimos parámetros a números
     let Ok(part_index) = part.parse::<usize>() else {
         return invalid_request("Invalid value for 'part'".to_string());
     };
+
     let Ok(total_parts) = total.parse::<usize>() else {
         return invalid_request("Invalid value for 'total'".to_string());
     };
 
-    // Armamos ruta al archivo y leemos el contenido
+    // TODO Could be done on master, once
     let filepath = format!("archivos/{}", name);
-    let Ok(contenido) = std::fs::read_to_string(filepath) else {
+    let Ok(text) = std::fs::read_to_string(filepath) else {
         return invalid_request("Could not read file".to_string());
     };
 
-    let count = count_partial::contar_palabras(contenido, part_index, total_parts);
+    let count = distributed::count_partial::count_part_words(text, part_index, total_parts);
+    let count = match count {
+        Ok(count) => count,
+        Err(e) => return invalid_request(e),
+    };
 
-    if let Err(e) = count {
-        return invalid_request(e);
-    }
-
-    // Armamos respuesta como string
-    let resultado = format!("archivo={},palabras={}", name, count.unwrap());
-    valid_request(resultado)
+    valid_request(format!("file={},part={},words={}", name, part, count))
 }
 
 fn count_total(req: HttpRequest) -> HttpResponse {
@@ -376,26 +373,22 @@ fn count_total(req: HttpRequest) -> HttpResponse {
     let Some(name) = req.params.get("name") else {
         return invalid_request("Missing parameter: name".to_string());
     };
-    let Some(results_str) = req.params.get("results") else {
-        return invalid_request("Missing parameter: results".to_string());
+
+    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
+    let body = match req.body {
+        request::Body::JSON(content) => content,
+        _ => return invalid_request("Missing JSON content with values!".to_string()),
     };
 
-    // Normalizar el parámetro results para evitar problemas de saltos de línea o espacios
-    let results_str = results_str.replace("\n", "").replace("\r", "").replace(" ", "");
-    println!("results_str normalizado: {:?}", results_str);
-    // Convertimos string "3,4,2" en vector [3,4,2]
-    let resultados: Option<Vec<usize>> = results_str
-        .split(',')
-        .map(|s| s.trim().parse::<usize>().ok())
-        .collect();
-
-    let Some(valores) = resultados else {
-        return invalid_request("Invalid format for 'results'".to_string());
+    // We parse the JSON using the count struct as the required data structure
+    // If the JSON doesn't adhere to the struct, we can error out
+    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
+    let Ok(body) = serde_json::from_str::<count::CountJoinInput>(&body) else {
+        return invalid_request("Invalid JSON format for values!".to_string());
     };
 
-    let suma = count_total::unir_resultados(&valores);
-    let respuesta = format!("archivo={},total_palabras={}", name, suma);
-    valid_request(respuesta)
+    let res = distributed::count_total::count_join(body);
+    valid_request(format!("file={},total={}", name, res))
 }
 
 fn matrix_partial(req: HttpRequest) -> HttpResponse {
@@ -403,45 +396,41 @@ fn matrix_partial(req: HttpRequest) -> HttpResponse {
         return HttpResponse::basic(405);
     }
 
-    // Extraer parámetros
-    let Some(fila_str) = req.params.get("fila") else {
-        return invalid_request("Missing parameter: fila".to_string());
-    };
-    let Some(columna_str) = req.params.get("columna") else {
-        return invalid_request("Missing parameter: columna".to_string());
-    };
-    let Some(matriz_a_str) = req.params.get("matriz_a") else {
-        return invalid_request("Missing parameter: matriz_a".to_string());
-    };
-    let Some(matriz_b_str) = req.params.get("matriz_b") else {
-        return invalid_request("Missing parameter: matriz_b".to_string());
+    let Some(row) = req.params.get("row") else {
+        return invalid_request("Missing parameter: row".to_string());
     };
 
-    // Parsear parámetros numéricos
-    let Ok(fila) = fila_str.parse::<usize>() else {
-        return invalid_request("Invalid value for 'fila'".to_string());
-    };
-    let Ok(columna) = columna_str.parse::<usize>() else {
-        return invalid_request("Invalid value for 'columna'".to_string());
+    let Some(column) = req.params.get("column") else {
+        return invalid_request("Missing parameter: column".to_string());
     };
 
-    // Parsear matrices JSON
-    let Ok((matriz_a, matriz_b)) = matrix_partial::parse_matrices(matriz_a_str, matriz_b_str) else {
-        return invalid_request("Invalid JSON format for matrices".to_string());
+    let Ok(row) = row.parse::<usize>() else {
+        return invalid_request("Invalid value for 'row'".to_string());
     };
 
-    // Validar matrices
-    if !matrix_partial::validar_matrices(&matriz_a, &matriz_b) {
-        return invalid_request("Matrices are not compatible for multiplication".to_string());
-    }
+    let Ok(column) = column.parse::<usize>() else {
+        return invalid_request("Invalid value for 'column'".to_string());
+    };
 
-    // Crear tarea y calcular celda
-    let tarea = matrix_partial::obtener_celda_tarea(fila, columna, matriz_a, matriz_b);
-    let resultado = matrix_partial::calcular_celda_matriz(&tarea);
+    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
+    let body = match req.body {
+        request::Body::JSON(content) => content,
+        _ => return invalid_request("Missing JSON content with matrices!".to_string()),
+    };
 
-    // Formatear respuesta
-    let respuesta = format!("fila={},columna={},valor={}", resultado.fila, resultado.columna, resultado.valor);
-    valid_request(respuesta)
+    // We parse the JSON using the matrix struct as the required data structure
+    // If the JSON doesn't adhere to the struct, we can error out
+    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
+    let Ok(matrices) = serde_json::from_str::<matrix::MatrixMultInput>(&body) else {
+        return invalid_request("Invalid JSON format for matrices!".to_string());
+    };
+
+    let res = match distributed::matrix_partial::matrix_cell_value(matrices, row, column) {
+        Ok(res) => res,
+        Err(e) => return invalid_request(e.to_string()),
+    };
+
+    valid_request(format!("row={}, column={}, value={}", row, column, res))
 }
 
 fn matrix_total(req: HttpRequest) -> HttpResponse {
@@ -449,57 +438,31 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
         return HttpResponse::basic(405);
     }
 
-    // Extraer parámetros
-    let matriz_a_str = req.params.get("matriz_a").cloned().unwrap_or_default();
-    let matriz_b_str = req.params.get("matriz_b").cloned().unwrap_or_default();
-    let filas_str = req.params.get("filas").cloned().unwrap_or_default();
-    let columnas_str = req.params.get("columnas").cloned().unwrap_or_default();
-    let valores_str = req.params.get("valores").cloned().unwrap_or_default();
-
-    if matriz_a_str.is_empty() || matriz_b_str.is_empty() || filas_str.is_empty() || columnas_str.is_empty() || valores_str.is_empty() {
-        return invalid_request("Missing one or more required parameters: matriz_a, matriz_b, filas, columnas, valores".to_string());
-    }
-
-    // Parsear las matrices para obtener dimensiones
-    let (matriz_a, matriz_b) = match matrix_partial::parse_matrices(&matriz_a_str, &matriz_b_str) {
-        Ok(matrices) => matrices,
-        Err(e) => return invalid_request(format!("Invalid JSON for matrices: {}", e)),
+    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
+    let body = match req.body {
+        request::Body::JSON(content) => content,
+        _ => return invalid_request("Missing JSON content with values!".to_string()),
     };
-    
-    // Validar compatibilidad de matrices
-    if !matrix_partial::validar_matrices(&matriz_a, &matriz_b) {
-        return invalid_request("Matrices are not compatible for multiplication".to_string());
-    }
 
-    // Parsear los resultados de las celdas
-    let filas_vec: Vec<usize> = filas_str.split(',').filter_map(|s| s.parse().ok()).collect();
-    let columnas_vec: Vec<usize> = columnas_str.split(',').filter_map(|s| s.parse().ok()).collect();
-    let valores_vec: Vec<i32> = valores_str.split(',').filter_map(|s| s.parse().ok()).collect();
+    // We parse the JSON using the matrix struct as the required data structure
+    // If the JSON doesn't adhere to the struct, we can error out
+    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
+    let Ok(body) = serde_json::from_str::<matrix::MatrixJoinInput>(&body) else {
+        return invalid_request("Invalid JSON format for matrices!".to_string());
+    };
 
-    if filas_vec.len() != columnas_vec.len() || filas_vec.len() != valores_vec.len() {
-        return invalid_request("The number of items in filas, columnas, and valores must be equal.".to_string());
-    }
+    let res = distributed::matrix_total::matrix_multi_join(2, 2, body.values);
+    let Ok(res) = serde_json::to_string(&res) else {
+        return invalid_request("Unable to parse resulting matrix!".to_string());
+    };
 
-    let resultados: Vec<ResultadoCelda> = filas_vec.into_iter()
-        .zip(columnas_vec.into_iter())
-        .zip(valores_vec.into_iter())
-        .map(|((fila, columna), valor)| ResultadoCelda { fila, columna, valor })
-        .collect();
-
-    // Calcular dimensiones y construir la matriz final
-    let (filas_dim, columnas_dim) = matrix_total::calcular_dimensiones_resultado(&matriz_a, &matriz_b);
-    let matriz_resultado = matrix_total::construir_matriz_resultado(&resultados, filas_dim, columnas_dim);
-
-    // Devolver el resultado como JSON
-    let respuesta_json = matrix_total::matriz_a_json(&matriz_resultado);
-    let mut headers = HashMap::new();
+    let version = "HTTP/1.1".to_string();
+    let status = 200;
+    let mut headers = HashMap::<String, String>::new();
     headers.insert("Content-Type".to_string(), "application/json".to_string());
-    HttpResponse::new(
-        "HTTP/1.1".to_string(),
-        200,
-        headers,
-        respuesta_json,
-    )
+    headers.insert("Content-Length".to_string(), res.len().to_string());
+
+    HttpResponse::new(version, status, headers, res)
 }
 
 fn invalid_request(contents: String) -> HttpResponse {
