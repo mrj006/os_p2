@@ -5,6 +5,7 @@ mod models;
 mod pool;
 mod server;
 mod status;
+mod redis_comm;
 
 use std::env;
 

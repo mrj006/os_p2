@@ -3,6 +3,8 @@ use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}}
 use super::{request::HttpRequest, response::HttpResponse};
 use crate::{functions, models::{count, matrix}, server::request, status::status};
 use crate::{distributed};
+use crate::{redis_comm};
+
 
 pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
     // Based on parsing logic, the vector will always have at least 1 item
