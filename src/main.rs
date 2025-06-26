@@ -1,44 +1,39 @@
+use std::env;
+
+use crate::errors::{log_error, log_info};
+
 mod distributed;
 mod errors;
 mod functions;
 mod models;
 mod pool;
 mod server;
+mod server_master;
 mod status;
 mod redis_comm;
 
-use std::env;
-
 fn main() {
-    // Lee la variable de entorno para determinar el rol
-    let role = env::var("APP_ROLE").unwrap_or_else(|_| "standalone".to_string());
-
-    println!("Iniciando aplicación en modo: {}", role);
-
-    match role.as_str() {
-        "master" => {
-            // Lógica del Master
-            
-            if let Ok(redis_url) = env::var("REDIS_URL") {
-                 println!("Conectando a Redis en: {}", redis_url);
-            }
-
+    let port = match env::var("SERVER_PORT") {
+        Ok(value) => value.parse::<u16>().unwrap(),
+        Err(_) => {
+            log_error(format!("Unable to read port from env vars, defaulting to 7878!").into());
+            unsafe { env::set_var("SERVER_PORT", "7878") };
+            7878
         }
-        "slave" => {
-            // Lógica del Slave
-            let master_url = env::var("MASTER_URL").expect("La variable MASTER_URL es necesaria para el slave");
-            
-            // Aquí deberíá ir el request al endpoint del master.
+    };
 
-        }
-        _ => {
-            println!("Rol no especificado. Corriendo para desarrollo local.");
-        }
+    let role = env::var("SERVER_ROLE");
+    
+    if let Err(_) = role {
+        log_info(format!("Starting server as slave on port {}", port));
+        server::server::create_server(port);
     }
 
-    let port_str = env::var("PORT").unwrap_or_else(|_| "7878".to_string());
-    let port: u16 = port_str.parse().expect("La variable de entorno PORT debe ser un número válido");
-    
-    println!("Iniciando servidor en el puerto {}", port);
-    server::server::create_server(port);
+    if role.unwrap() == "MASTER" {
+        log_info(format!("Starting server as master on port {}", port));
+        server_master::server::create_server(port);
+    } else {
+        log_info(format!("Starting server as slave on port {}", port));
+        server::server::create_server(port);
+    }
 }

@@ -56,10 +56,12 @@ spec:
         ports:
         - containerPort: 7878
         env:
-        - name: PORT
+        - name: SERVER_PORT
           value: "7878"
-        - name: APP_ROLE
-          value: "master"
+        - name: SERVER_ROLE
+          value: "MASTER"
+        - name: SLAVE_CODE
+          value: "test"
         - name: REDIS_URL
           value: "redis://redis-service:6379"
 ---
@@ -101,11 +103,13 @@ spec:
         ports:
         - containerPort: 7878
         env:
-        - name: PORT
+        - name: SERVER_PORT
           value: "7878"
-        - name: APP_ROLE
+        - name: SERVER_ROLE
           value: "slave"
-        - name: MASTER_URL
-          value: "http://master-service:7878"
+        - name: MASTER_SOCKET
+          value: "master-service:7878"
+        - name: SLAVE_CODE
+          value: "test"
         - name: REDIS_URL
-          value: "redis://redis-service:6379" 
+          value: "redis://redis-service:6379"
