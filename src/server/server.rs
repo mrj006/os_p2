@@ -1,14 +1,18 @@
-use std::{io::Write, net::{SocketAddr, TcpListener, TcpStream}};
+use std::{env, io::Write};
+use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 
 use crate::errors::{self, *};
+use crate::models::request::HttpRequest;
 use crate::pool;
+use crate::models::response::HttpResponse;
 use crate::status::status;
 
-use super::response::HttpResponse;
 use super::parser::parse;
 use super::routes;
 
 pub fn create_server(port: u16) {
+    report_to_master();
+    
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(address);
 
@@ -35,7 +39,9 @@ pub fn create_server(port: u16) {
         // We can ignore stream errors as we wouldn't be able to do anything
         if stream.is_ok() {
             pool.execute(move || {
-                if let Err(e) = handle_requests(stream.unwrap(), port) {
+                let stream = stream.unwrap();
+                let remote = stream.peer_addr().unwrap();
+                if let Err(e) = handle_requests(stream, remote) {
                     log_error(e);
                 }
             });
@@ -43,7 +49,7 @@ pub fn create_server(port: u16) {
     }
 }
 
-fn handle_requests(req: TcpStream, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+fn handle_requests(req: TcpStream, remote: SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
     let version = "HTTP/1.1".to_string();
     let message = parse(&req);
 
@@ -70,18 +76,46 @@ fn handle_requests(req: TcpStream, port: u16) -> Result<(), Box<dyn std::error::
             return send_response(req, res);
     }
 
-    let res = routes::handle_route(message, port);
-
-    if let Err(_) = res {
-        let res = HttpResponse::basic(500);
-        return send_response(req, res);
-    }
-
-    send_response(req, res.unwrap())
+    let res = routes::handle_route(message, remote);
+    
+    send_response(req, res)
 }
 
 fn send_response(mut req: TcpStream, res: HttpResponse)
     -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(req.write_all(format!("{res}").as_bytes())?)
+}
+
+fn report_to_master() {
+    let Ok(master_socket) = env::var("MASTER_SOCKET") else {
+        log_error("Unable to read 'MASTER_SOCKET' from env variable!".into());
+        panic!("Unrecoverable error! Check logs.");
+    };
+
+    // We get only the first entry as there should be only 1 DNS result 
+    let master_socket = master_socket.to_socket_addrs().unwrap().next().unwrap();
+
+    let timeout = std::time::Duration::from_secs(30);
+    let Ok(mut stream) = TcpStream::connect_timeout(&master_socket, timeout) else {
+        log_error("Master unreachable!".into());
+        panic!("Unrecoverable error! Check logs.");
+    };
+
+    // We can safely unwrap these vars as they were checked before starting the
+    // server
+    let port = env::var("SERVER_PORT").unwrap();
+    let slave_code = env::var("SLAVE_CODE").unwrap();
+
+    let mut req = HttpRequest::default();
+    req.method = "POST".to_string();
+    req.params.insert("port".to_string(), port);
+    req.params.insert("slave_code".to_string(), slave_code);
+    req.uri.push("slave".to_string());
+    req.version = "HTTP/1.1".to_string();
+
+    if let Err(_) = stream.write_all(format!("{}", req).as_bytes()) {
+        log_error("Master unreachable!".into());
+        panic!("Unrecoverable error! Check logs.");
+    }
 }

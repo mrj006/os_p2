@@ -1,43 +1,56 @@
-use std::{collections::HashMap, io::{Read, Write}, net::{SocketAddr, TcpStream}};
+use std::{collections::HashMap, env};
+use std::net::{SocketAddr, ToSocketAddrs};
 
-use super::{request::HttpRequest, response::HttpResponse};
-use crate::{functions, models::{count, matrix}, server::request, status::status};
+use crate::models::{request::{HttpRequest, *}, response::HttpResponse};
+use crate::{functions, models::{count, matrix}, status::status};
 use crate::{distributed};
-use crate::{redis_comm};
 
+pub fn handle_route(req: HttpRequest, remote: SocketAddr) -> HttpResponse {
+    // We can safely unwrap the results as we checked for the variable before
+    // starting the server
+    let master_socket = env::var("MASTER_SOCKET").unwrap();
 
-pub fn handle_route(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+    // We get only the first entry as there should be only 1 DNS result
+    let master_socket = master_socket.to_socket_addrs().unwrap().next().unwrap();
+
+    if remote.ip() != master_socket.ip() {
+        return invalid_request("This server will only accept messages from its master!".to_string());
+    }
+    
     // Based on parsing logic, the vector will always have at least 1 item
     let base_uri = req.uri[0].as_str();
     let pid = gettid::gettid();
-    status::update_worker(pid, true, base_uri.to_string());
+    status::update_thread(pid, true, base_uri.to_string());
     status::increase_requests_handled();
 
     match base_uri {
         "createfile" => createfile(req),
         "deletefile" => deletefile(req),
-        "fibonacci" => Ok(fibonacci(req)),
-        "hash" => Ok(hash(req)),
-        "help" => Ok(help(req)),
-        "loadtest" => loadtest(req, port),
-        "random" => Ok(random(req)),
-        "reverse" => Ok(reverse(req)),
-        "simulate" => Ok(simulate(req)),
-        "sleep" => Ok(sleep(req)),
-        "status" => Ok(status(req)),
-        "timestamp" => Ok(timestamp(req)),
-        "toupper" => Ok(toupper(req)),
-        "countpartial" => Ok(count_partial(req)),
-        "counttotal" => Ok(count_total(req)),
-        "matrixpartial" => Ok(matrix_partial(req)),
-        "matrixtotal" => Ok(matrix_total(req)),
-        _ => Ok(HttpResponse::basic(404))
+        "fibonacci" => fibonacci(req),
+        "hash" => hash(req),
+        "random" => random(req),
+        "reverse" => reverse(req),
+        "simulate" => simulate(req),
+        "sleep" => sleep(req),
+        "status" => status(req),
+        "timestamp" => timestamp(req),
+        "toupper" => toupper(req),
+        "countpartial" => count_partial(req),
+        "counttotal" => count_total(req),
+        "matrixpartial" => matrix_partial(req),
+        "matrixtotal" => matrix_total(req),
+        "ping" => ping(req),
+        _ => HttpResponse::basic(404)
     }
 }
 
-fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+fn ping(_: HttpRequest) -> HttpResponse {
+    valid_request("".to_string()) 
+}
+
+fn createfile(req: HttpRequest) -> HttpResponse {
     if req.method != "POST" {
-        return Ok(HttpResponse::basic(405));
+        return HttpResponse::basic(405);
     }
 
     let name = req.params.get("name");
@@ -45,7 +58,7 @@ fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     let repeat = req.params.get("repeat");
 
     if !(name.is_some() && content.is_some() && repeat.is_some()) {
-        return Ok(invalid_request("Invalid query params provided!".to_string()));
+        return invalid_request("Invalid query params provided!".to_string());
     }
 
     let name = name.unwrap();
@@ -53,41 +66,41 @@ fn createfile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Erro
     let repeat = repeat.unwrap().parse::<u64>();
 
     if let Err(_) = repeat {
-        return Ok(invalid_request("Unable to parse repeat param!".to_string()));
+        return invalid_request("Unable to parse repeat param!".to_string());
     }
 
     let repeat = repeat.unwrap();
     match functions::createfile::createfile(name, content, repeat) {
-        Ok(_) => Ok(HttpResponse::basic(200)),
+        Ok(_) => HttpResponse::basic(200),
         Err(e) => {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
-                return Ok(invalid_request("File already exists!".to_string()));
+                return invalid_request("File already exists!".to_string());
             } else {
-                return Ok(HttpResponse::basic(500));
+                return HttpResponse::basic(500);
             }
         }
     }
 }
 
-fn deletefile(req: HttpRequest) -> Result<HttpResponse, Box<dyn std::error::Error>> {
+fn deletefile(req: HttpRequest) -> HttpResponse {
     if req.method != "DELETE" {
-        return Ok(HttpResponse::basic(405));
+        return HttpResponse::basic(405);
     }
 
     let name = req.params.get("name");
 
     if name.is_none() {
-        return Ok(invalid_request("Invalid query params provided!".to_string()));
+        return invalid_request("Invalid query params provided!".to_string());
     }
 
     let name = name.unwrap();
     let run = functions::deletefile::deletefile(name);
 
     if let Err(_) = run {
-        return Ok(invalid_request("Unable to delete file!".to_string()));
+        return invalid_request("Unable to delete file!".to_string());
     }
 
-    Ok(HttpResponse::basic(200))
+    HttpResponse::basic(200)
 }
 
 fn fibonacci(req: HttpRequest) -> HttpResponse {
@@ -131,57 +144,6 @@ fn hash(req: HttpRequest) -> HttpResponse {
     let text = text.unwrap();
     let run = functions::hash::hash(text);
     valid_request(run)
-}
-
-fn help(req: HttpRequest) -> HttpResponse {
-    if req.method != "GET" {
-        return HttpResponse::basic(405);
-    }
-
-    let run = functions::help::help();
-    valid_request(run)
-}
-
-fn loadtest(req: HttpRequest, port: u16) -> Result<HttpResponse, Box<dyn std::error::Error>> {
-    if req.method != "GET" {
-        return Ok(HttpResponse::basic(405));
-    }
-
-    let tasks = req.params.get("tasks");
-    let sleep = req.params.get("sleep");
-
-    if !(tasks.is_some() && sleep.is_some()) {
-        return Ok(invalid_request("Invalid query params provided!".to_string()));
-    }
-
-    let tasks = tasks.unwrap().parse::<u64>();
-    let sleep = sleep.unwrap().parse::<u64>();
-
-    if let Err(_) = tasks {
-        return Ok(invalid_request("Unable to parse tasks!".to_string()));
-    }
-
-    if let Err(_) = sleep {
-        return Ok(invalid_request("Unable to parse sleep!".to_string()));
-    }
-
-    let tasks = tasks.unwrap();
-    let sleep = sleep.unwrap();
-
-    let request = format!("GET /sleep?seconds={sleep} HTTP/1.1 \r\n\r\n");
-    
-    for n in 0..tasks {
-        let mut stream = TcpStream::connect(SocketAddr::from(([127, 0, 0, 1], port)))?;
-        let _ = stream.write_all(request.as_bytes())?;
-
-        if n == (tasks - 1) {
-            let mut response = String::new();
-            let _ = stream.read_to_string(&mut response);
-        }
-    }
-
-    let contents = format!("{tasks} sleep tasks with a duration of {sleep} seconds were spawned");
-    Ok(valid_request(contents))
 }
 
 fn random(req: HttpRequest) -> HttpResponse {
@@ -328,57 +290,38 @@ fn toupper(req: HttpRequest) -> HttpResponse {
 }
 
 fn count_partial(req: HttpRequest) -> HttpResponse {
-    if req.method != "GET" {
-        return HttpResponse::basic(405);
-    }
+    // We can simplify slaves' checks as we perform them in the master
+    // - params provided
+    // - parsing of params
 
-    let Some(name) = req.params.get("name") else {
-        return invalid_request("Missing parameter: name".to_string());
-    };
+    let name = req.params.get("name").unwrap();
+    let part = req.params.get("part").unwrap();
+    let total = req.params.get("total").unwrap();
+    let part_index = part.parse::<usize>().unwrap();
+    let total_parts= total.parse::<usize>().unwrap();
 
-    let Some(part) = req.params.get("part") else {
-        return invalid_request("Missing parameter: part".to_string());
-    };
-
-    let Some(total) = req.params.get("total") else {
-        return invalid_request("Missing parameter: total".to_string());
-    };
-
-    let Ok(part_index) = part.parse::<usize>() else {
-        return invalid_request("Invalid value for 'part'".to_string());
-    };
-
-    let Ok(total_parts) = total.parse::<usize>() else {
-        return invalid_request("Invalid value for 'total'".to_string());
-    };
-
-    // TODO Could be done on master, once
+    // We keep this check, as the file could've been manipulated by a 3rd party
+    // between executions
     let filepath = format!("archivos/{}", name);
     let Ok(text) = std::fs::read_to_string(filepath) else {
         return invalid_request("Could not read file".to_string());
     };
-
+    
     let count = distributed::count_partial::count_part_words(text, part_index, total_parts);
-    let count = match count {
-        Ok(count) => count,
-        Err(e) => return invalid_request(e),
-    };
 
     valid_request(format!("file={},part={},words={}", name, part, count))
 }
 
 fn count_total(req: HttpRequest) -> HttpResponse {
-    if req.method != "GET" {
-        return HttpResponse::basic(405);
-    }
+    // We can simplify slaves' checks as we perform them in the master
+    // - params provided
+    // - parsing of params
 
-    let Some(name) = req.params.get("name") else {
-        return invalid_request("Missing parameter: name".to_string());
-    };
+    let name = req.params.get("name").unwrap();
 
     // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
     let body = match req.body {
-        request::Body::JSON(content) => content,
+        Body::JSON(content) => content,
         _ => return invalid_request("Missing JSON content with values!".to_string()),
     };
 
@@ -394,29 +337,18 @@ fn count_total(req: HttpRequest) -> HttpResponse {
 }
 
 fn matrix_partial(req: HttpRequest) -> HttpResponse {
-    if req.method != "GET" {
-        return HttpResponse::basic(405);
-    }
+    // We can simplify slaves' checks as we perform them in the master
+    // - params provided
+    // - parsing of params
 
-    let Some(row) = req.params.get("row") else {
-        return invalid_request("Missing parameter: row".to_string());
-    };
-
-    let Some(column) = req.params.get("column") else {
-        return invalid_request("Missing parameter: column".to_string());
-    };
-
-    let Ok(row) = row.parse::<usize>() else {
-        return invalid_request("Invalid value for 'row'".to_string());
-    };
-
-    let Ok(column) = column.parse::<usize>() else {
-        return invalid_request("Invalid value for 'column'".to_string());
-    };
+    let row = req.params.get("row").unwrap();
+    let column = req.params.get("column").unwrap();
+    let row = row.parse::<usize>().unwrap();
+    let column = column.parse::<usize>().unwrap();
 
     // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
     let body = match req.body {
-        request::Body::JSON(content) => content,
+        Body::JSON(content) => content,
         _ => return invalid_request("Missing JSON content with matrices!".to_string()),
     };
 
@@ -427,22 +359,18 @@ fn matrix_partial(req: HttpRequest) -> HttpResponse {
         return invalid_request("Invalid JSON format for matrices!".to_string());
     };
 
-    let res = match distributed::matrix_partial::matrix_cell_value(matrices, row, column) {
-        Ok(res) => res,
-        Err(e) => return invalid_request(e.to_string()),
-    };
-
+    let res =  distributed::matrix_partial::matrix_cell_value(matrices, row, column);
     valid_request(format!("row={}, column={}, value={}", row, column, res))
 }
 
 fn matrix_total(req: HttpRequest) -> HttpResponse {
-    if req.method != "GET" {
-        return HttpResponse::basic(405);
-    }
+    // We can simplify slaves' checks as we perform them in the master
+    // - params provided
+    // - parsing of params
 
     // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
     let body = match req.body {
-        request::Body::JSON(content) => content,
+        Body::JSON(content) => content,
         _ => return invalid_request("Missing JSON content with values!".to_string()),
     };
 

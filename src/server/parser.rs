@@ -3,7 +3,7 @@ use std::{
     collections::HashMap, io::{prelude::*, BufReader}, net::TcpStream
 };
 
-use super::request::{Body, HttpRequest};
+use crate::models::request::{Body, HttpRequest};
 use crate::errors::*;
 
 // This function parses a valid http request message and returns a struct or
@@ -104,15 +104,12 @@ fn parse_headers(buf_reader: &mut BufReader<&mut &TcpStream>) -> HashMap<String,
 fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<String, String>) -> Result<Body, Box<dyn std::error::Error>> {
     let mut body = Body::JSON(String::new());
 
-    let content_length = headers.get("Content-Length");
-
     // If the header is missing, we return early with an empty hashmap
-    if content_length.is_none() {
+    let Some(content_length) = headers.get("Content-Length") else {
         return Ok(body);
-    }
+    };
 
-    // This unwrap shouldn't fail as we checked it and return early in the if above
-    let content_length = content_length.unwrap().parse::<u64>()?;
+    let content_length = content_length.parse::<u64>()?;
 
     // If the content is 0-length'd, we can stop the function
     if content_length == 0 {
