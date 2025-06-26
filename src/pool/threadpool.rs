@@ -1,9 +1,11 @@
-use std::{sync::{mpsc, Arc, Mutex}, thread};
+use std::{sync::{mpsc, Arc}, thread};
+use parking_lot::Mutex;
+
 use crate::errors::pool::PoolError;
 use crate::status::status;
 
 pub struct ThreadPool {
-    workers: Vec<Worker>,
+    threads: Vec<Thread>,
     sender: Option<mpsc::Sender<Job>>,
 }
 
@@ -22,18 +24,18 @@ impl ThreadPool {
         // Arc<Mutex<>> for multiple access.
         let receiver = Arc::new(Mutex::new(receiver));
 
-        // Defines a amount of workers to have
-        let mut workers = Vec::with_capacity(size);
+        // Defines a amount of threads to have
+        let mut threads = Vec::with_capacity(size);
 
         for id in 0..size {
-            // We send a pointer clone for each worker to have access to the queue
-            workers.push(Worker::new(id, Arc::clone(&receiver))?);
+            // We send a pointer clone for each thread to have access to the queue
+            threads.push(Thread::new(id, Arc::clone(&receiver))?);
         }
 
-        Ok(ThreadPool {workers, sender: Some(sender)})
+        Ok(ThreadPool {threads, sender: Some(sender)})
     }
     
-    // This helper function will pass the required work-to-do to each worker
+    // This helper function will pass the required work-to-do to each thread
     pub fn execute<F>(&self, f: F)
     where
         F: FnOnce() + Send + 'static,
@@ -44,58 +46,52 @@ impl ThreadPool {
 }
 
 // Implementing dropping trait for graceful shutdown, if required
-// This makes sure the on-going job is completed before dropping the worker
+// This makes sure the on-going job is completed before dropping the thread
 impl Drop for ThreadPool {
     fn drop(&mut self) {
         drop(self.sender.take());
 
-        for worker in self.workers.drain(..) {
-            println!("Shutting down worker {}", worker.id);
+        for thread in self.threads.drain(..) {
+            println!("Shutting down thread {}", thread.id);
 
-            worker.thread.join().unwrap();
+            thread.thread.join().unwrap();
         }
     }
 }
 
-struct Worker {
+struct Thread {
     id: usize,
     thread: thread::JoinHandle<()>,
 }
 
-impl Worker {
-    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Result<Worker, Box<dyn std::error::Error>> {
+impl Thread {
+    fn new(id: usize, receiver: Arc<Mutex<mpsc::Receiver<Job>>>) -> Result<Thread, Box<dyn std::error::Error>> {
         let builder = thread::Builder::new();
         let thread = builder.spawn(move || {
             let pid = gettid::gettid();
-            status::update_worker(pid, false, "".to_string());
+            status::update_thread(pid, false, "".to_string());
 
             loop {
-                let mut message = receiver.lock();
-    
-                // If a thread panic'd, we could 'unwrap' the error and re-acquire
-                // the lock
-                if let Err(error) = message {
-                    let data = error.into_inner();
-                    message = Ok(data);
-                }
-    
+                // We need to first get a lock on the vector
+                let message = receiver.lock();
+        
                 // We can safely unwrap the guard as we already handled the poison
-                let message = message.unwrap().recv();
+                let message = message.recv();
     
                 // The only error at this point is a sender dropped
                 // The only way to receive that error is if the pool is closing
                 if let Err(_) = message {
-                    println!("Incoming channel closed, shutting down worker {id}");
+                    println!("Incoming channel closed, shutting down thread {id}");
                     break;
                 }
-                println!("Worker {id} working...");
+                println!("Thread {id} working...");
 
                 // The double parenthesis means we are calling the boxed function
                 message.unwrap()();
-                println!("Worker {id} finished!");
-                status::update_worker(pid, false, "".to_string());
+                println!("Thread {id} finished!");
+                status::update_thread(pid, false, "".to_string());
             }
         })?;
-        Ok(Worker { id, thread })
+        Ok(Thread { id, thread })
     }
 }
