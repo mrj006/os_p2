@@ -1,5 +1,5 @@
 [package]
-name = "os_p1"
+name = "os_p2"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,3 +12,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 redis = "0.23"
 uuid = { version = "1", features = ["v4"] }
+tokio = { version = "1.45.1", features = ["full"] }
+parking_lot = "0.12.4"
+indexmap = "2.9.0"
+tokio-util = "0.7.15"
