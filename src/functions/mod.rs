@@ -168,6 +168,12 @@ mod tests {
     }
 
     #[test]
+    fn simulate() {
+        let _ = simulate::simulate(5, "test");
+        assert!(true);
+    }
+
+    #[test]
     fn timestamp() {
         let timestamp = timestamp::timestamp();
         let timestamp: Vec<&str> = timestamp.split(&['-', 'T', ':', '+']).collect();

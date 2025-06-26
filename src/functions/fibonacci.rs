@@ -12,5 +12,5 @@ pub fn fibonacci(n: u128) -> Option<u128> {
         current = new;
     }
 
-    return Some(current);
+    Some(current)
 }
