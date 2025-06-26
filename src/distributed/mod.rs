@@ -15,18 +15,18 @@ mod tests {
     fn count_partial_success() {
         let file = fs::read_to_string("archivos/counttest.txt").unwrap();
         let res = count_partial::count_part_words(file.clone(), 0, 3);
-        assert_eq!(10, res.unwrap());
+        assert_eq!(10, res);
         let res = count_partial::count_part_words(file.clone(), 1, 3);
-        assert_eq!(7, res.unwrap());
+        assert_eq!(7, res);
         let res = count_partial::count_part_words(file.clone(), 2, 3);
-        assert_eq!(6, res.unwrap());
+        assert_eq!(6, res);
     }
 
     #[test]
     #[should_panic]
     fn count_partial_part_error() {
         let file = fs::read_to_string("archivos/counttest.txt").unwrap();
-        let _ = count_partial::count_part_words(file.clone(), 3, 3).unwrap();
+        let _ = count_partial::count_part_words(file.clone(), 3, 3);
     }
 
     #[test]
@@ -43,7 +43,7 @@ mod tests {
         let mut values = Vec::<usize>::new();
 
         for i in 0..total {
-            let res = count_partial::count_part_words(file.clone(), i, total).unwrap();
+            let res = count_partial::count_part_words(file.clone(), i, total);
             values.push(res);
         }
 
@@ -60,7 +60,7 @@ mod tests {
         let matrix_b = matrix::Matrix { matrix: vec![vec![5,6], vec![7,8]] };
         let matrices = matrix::MatrixMultInput { matrix_a, matrix_b };
 
-        let _ = matrix_partial::matrix_cell_value(matrices, 0, 0).unwrap();
+        let _ = matrix_partial::matrix_cell_value(matrices, 0, 0);
     }
 
     #[test]
@@ -70,7 +70,7 @@ mod tests {
         let matrix_b = matrix::Matrix { matrix: vec![vec![5,6], vec![7,8]] };
         let matrices = matrix::MatrixMultInput { matrix_a, matrix_b };
 
-        let _ = matrix_partial::matrix_cell_value(matrices, 0, 0).unwrap();
+        let _ = matrix_partial::matrix_cell_value(matrices, 0, 0);
     }
 
     #[test]
@@ -79,7 +79,7 @@ mod tests {
         let matrix_b = matrix::Matrix { matrix: vec![vec![5,6], vec![7,8]] };
         let matrices = matrix::MatrixMultInput { matrix_a, matrix_b };
 
-        let res = matrix_partial::matrix_cell_value(matrices, 0, 0).unwrap();
+        let res = matrix_partial::matrix_cell_value(matrices, 0, 0);
 
         assert_eq!(res, 19);
     }

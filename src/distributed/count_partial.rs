@@ -1,14 +1,10 @@
-pub fn count_part_words(text: String, part: usize, total: usize) -> Result<usize, String> {
-    (part < total)
-        .then_some(())
-        .ok_or("Part out of bounds".to_string())?;
-
+pub fn count_part_words(text: String, part: usize, total: usize) -> usize {
     let subtext = get_part_range(text, part, total);
 
-    Ok(subtext
+    subtext
         .split_whitespace()
         .filter(|s| !s.is_empty())
-        .count())
+        .count()
 }
 
 // We get a sub string based on the part specified
