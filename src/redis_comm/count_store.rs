@@ -1,33 +1,28 @@
-use redis::{Commands, Connection, RedisResult};
+use redis::RedisResult;
 
-pub fn guardar_resultado_count(redis: &mut Connection, archivo: &str, part: &str, valor: usize) -> RedisResult<()> {
-    let clave = format!("count:{}:{}", archivo, part);
-    redis.set(clave, valor)
+use crate::models::count::CountJoinInput;
+
+use super::connection;
+
+pub fn add_count_part_res(file: &str, part: &str, count: usize) -> RedisResult<()> {
+    let key = format!("count:{}:{}", file, part);
+    connection::add_data_to_redis(key, count.to_string())
 }
 
-pub fn obtener_resultados_count(redis: &mut Connection, archivo: &str) -> RedisResult<Vec<usize>> {
-    let patron = format!("count:{}:*", archivo);
-    let claves: Vec<String> = redis.keys(patron)?;
-    let mut resultados = vec![];
+pub fn get_count_part_res(file: &str) -> Result<CountJoinInput, Box<dyn std::error::Error>> {
+    let pattern = format!("count:{}:*", file);
+    let values = connection::get_values_from_redis(pattern)?;
+    let mut res = vec![];
 
-    for clave in claves.iter() {
-        if let Ok(valor_str) = redis.get::<_, String>(clave) {
-            if let Ok(valor) = valor_str.parse::<usize>() {
-                resultados.push(valor);
-            }
-        }
+    for value in values {
+        let count = value.parse::<usize>().unwrap();
+        res.push(count);
     }
 
-    Ok(resultados)
+    Ok(CountJoinInput { values: res })
 }
 
-pub fn borrar_resultados_count(redis: &mut Connection, archivo: &str) -> RedisResult<()> {
-    let patron = format!("count:{}:*", archivo);
-    let claves: Vec<String> = redis.keys(patron)?;
-
-    for clave in claves.iter() {
-        let _ = redis.del::<_, ()>(clave);
-    }
-
-    Ok(())
+pub fn remove_count_res(file: &str) -> RedisResult<()> {
+    let pattern = format!("count:{}:*", file);
+    connection::remove_keys_from_redis(pattern)
 }

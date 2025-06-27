@@ -1,106 +1,77 @@
-use redis::{Commands, Connection, RedisResult};
+use redis::RedisResult;
+
 use crate::models::matrix::{Matrix, MatrixPartialRes, MatrixMultInput};
 
-/// Guarda un resultado parcial de una celda
-/// Clave: "matrix:{job}:{x},{y}"
-/// Valor: "{x},{y},{value}"
-pub fn guardar_resultado_matriz(redis: &mut Connection, job:&str, resultado: &MatrixPartialRes) -> RedisResult<()> {
-    let clave = format!("matrix:{}:{},{}", job, resultado.row, resultado.column);
-    let valor = format!("{},{},{}", resultado.row, resultado.column, resultado.value);
-    redis.set(clave, valor)
+use super::connection;
+
+/// Stores a cell value result of a matrices multiplication, tied to a job ID
+pub fn add_matrix_part_res(job:&str, cell: MatrixPartialRes) -> RedisResult<()> {
+    let key = format!("matrix:{}:{},{}", job, cell.row, cell.column);
+    let value = serde_json::to_string(&cell).unwrap();
+    connection::add_data_to_redis(key, value)
 }
 
-/// Obtiene todos los resultados parciales asociados a un job
-/// Devuelve un Vec<MatrixPartialRes>
-pub fn obtener_resultados_matriz(redis: &mut Connection, job: &str) -> RedisResult<Vec<MatrixPartialRes>> {
-    let patron = format!("matrix:{}:*", job);
-    let claves: Vec<String> = redis.keys(patron)?;
-    let mut resultados = vec![];
+/// Gets all cell results for a given job ID
+pub fn get_all_matrix_part_res(job: &str) -> Result<Vec<MatrixPartialRes>, Box<dyn std::error::Error>> {
+    let pattern = format!("matrix:{}:*", job);
+    let values = connection::get_values_from_redis(pattern)?;
+    let mut res: Vec<MatrixPartialRes> = vec![];
 
-    for clave in claves.iter() {
-        if let Ok(valor) = redis.get::<_, String>(clave) {
-            let partes: Vec<&str> = valor.split(',').collect();
-            if partes.len() == 3 {
-                if let (Ok(row), Ok(column), Ok(value)) = (
-                    partes[0].parse::<usize>(),
-                    partes[1].parse::<usize>(),
-                    partes[2].parse::<i64>(),
-                ) {
-                    resultados.push(MatrixPartialRes {
-                        row,
-                        column,
-                        value,
-                    });
-                }
-            }
-        }
+    for value in values {
+        let value = serde_json::from_str::<MatrixPartialRes>(&value).unwrap();
+        res.push(value);
     }
 
-    Ok(resultados)
+    Ok(res)
 }
 
-/// Borra todos los resultados parciales asociados a un job
-pub fn borrar_resultados_matriz(redis: &mut Connection, job: &str) -> RedisResult<()> {
-    let patron = format!("matrix:{}:*", job);
-    let claves: Vec<String> = redis.keys(patron)?;
-    for clave in claves {
-        let _ = redis.del::<_, ()>(clave);
-    }
-    Ok(())
+/// Removes all cell results of a given job ID
+pub fn remove_all_matrix_part_res(job: &str) -> RedisResult<()> {
+    let pattern = format!("matrix:{}:*", job);
+    connection::remove_keys_from_redis(pattern)
 }
 
 
-pub fn guardar_matrices_input(redis: &mut Connection, job: &str, input: &MatrixMultInput) -> RedisResult<()> {
-    let clave = format!("input_matrices:{}", job);
-
-    let string_a = input.matrix_a.matrix
-        .iter()
-        .map(|fila| fila.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","))
-        .collect::<Vec<_>>()
-        .join(";");
-
-    let string_b = input.matrix_b.matrix
-        .iter()
-        .map(|fila| fila.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(","))
-        .collect::<Vec<_>>()
-        .join(";");
-
-    let contenido = format!("{}|{}", string_a, string_b);
-    redis.set(clave, contenido)
+pub fn add_matrices_input(job: &str, matrices: &MatrixMultInput) -> RedisResult<()> {
+    let key = format!("matrices_input:{}", job);
+    let value = serde_json::to_string(matrices).unwrap();
+    connection::add_data_to_redis(key, value)
 }
 
 
-pub fn leer_matrices_input(redis: &mut Connection, job: &str) -> RedisResult<MatrixMultInput> {
-    let clave = format!("input_matrices:{}", job);
-    let contenido: String = redis.get(clave)?;
+pub fn get_matrices_input(job: &str) -> Result<MatrixMultInput, Box<dyn std::error::Error>> {
+    let key = format!("matrices_input:{}", job);
+    let value: String = connection::get_value_from_redis(key)?;
+    let matrices = serde_json::from_str::<MatrixMultInput>(&value).unwrap();
 
-    let mut partes = contenido.split('|');
-    let string_a = partes.next().unwrap_or_default();
-    let string_b = partes.next().unwrap_or_default();
-
-    let vec_a = string_a
-        .split(';')
-        .map(|fila| fila.split(',')
-        .filter_map(|v| v.parse::<i64>().ok())
-        .collect::<Vec<i64>>())
-        .collect::<Vec<_>>();
-
-    let vec_b = string_b
-        .split(';')
-        .map(|fila| fila.split(',')
-        .filter_map(|v| v.parse::<i64>().ok())
-        .collect::<Vec<i64>>())
-        .collect::<Vec<_>>();
-
-    Ok(MatrixMultInput {
-        matrix_a: Matrix { matrix: vec_a },
-        matrix_b: Matrix { matrix: vec_b },
-    })
+    Ok(matrices)
 }
 
-/// Borra una matriz original de Redis según el job
-pub fn borrar_matrices_input(redis: &mut Connection, job: &str) -> RedisResult<()> {
-    let clave = format!("input_matrices:{}", job);
-    redis.del(clave)
+pub fn remove_matrices_input(job: &str) -> RedisResult<()> {
+    let key = format!("matrices_input:{}", job);
+    connection::remove_key_from_redis(key)
 }
 
+pub fn add_matrix_res(job: &str, matrix: &Matrix) -> RedisResult<()> {
+    let key = format!("matrices_output:{}", job);
+    let value = serde_json::to_string(matrix).unwrap();
+    connection::add_data_to_redis(key, value)
+}
+
+pub fn get_matrix_res(job: &str) -> Result<Matrix, Box<dyn std::error::Error>> {
+    let key = format!("matrices_output:{}", job);
+    let value = connection::get_value_from_redis(key)?;
+    let value = serde_json::from_str::<Matrix>(&value).unwrap();
+    Ok(value)
+}
+
+pub fn remove_matrix_res(job: &str) -> RedisResult<()> {
+    let key = format!("matrices_output:{}", job);
+    connection::remove_key_from_redis(key)
+}
+
+pub fn remove_job(job: &str) -> RedisResult<()> {
+    let _ = remove_matrices_input(job)?;
+    let _ = remove_all_matrix_part_res(job)?;
+    remove_matrix_res(job)
+}

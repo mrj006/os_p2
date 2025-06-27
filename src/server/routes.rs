@@ -1,9 +1,11 @@
 use std::{collections::HashMap, env};
 use std::net::{SocketAddr, ToSocketAddrs};
 
-use crate::models::{request::{HttpRequest, *}, response::HttpResponse};
-use crate::{functions, models::{count, matrix}, status::status};
-use crate::{distributed};
+use crate::models::matrix::MatrixPartialRes;
+use crate::models::{request::HttpRequest, response::HttpResponse};
+use crate::status::status;
+use crate::{distributed, functions};
+use crate::redis_comm;
 
 pub fn handle_route(req: HttpRequest, remote: SocketAddr) -> HttpResponse {
     // We can safely unwrap the results as we checked for the variable before
@@ -308,8 +310,11 @@ fn count_partial(req: HttpRequest) -> HttpResponse {
     };
     
     let count = distributed::count_partial::count_part_words(text, part_index, total_parts);
-
-    valid_request(format!("file={},part={},words={}", name, part, count))
+    
+    match redis_comm::count_store::add_count_part_res(name, part, count) {
+        Ok(_) => valid_request(format!("file={},part={},words={}", name, part, count)),
+        Err(_) => server_issue_response(),
+    }
 }
 
 fn count_total(req: HttpRequest) -> HttpResponse {
@@ -318,21 +323,13 @@ fn count_total(req: HttpRequest) -> HttpResponse {
     // - parsing of params
 
     let name = req.params.get("name").unwrap();
-
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
-    let body = match req.body {
-        Body::JSON(content) => content,
-        _ => return invalid_request("Missing JSON content with values!".to_string()),
+    let Ok(values) = redis_comm::count_store::get_count_part_res(name) else {
+        return server_issue_response();
     };
 
-    // We parse the JSON using the count struct as the required data structure
-    // If the JSON doesn't adhere to the struct, we can error out
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
-    let Ok(body) = serde_json::from_str::<count::CountJoinInput>(&body) else {
-        return invalid_request("Invalid JSON format for values!".to_string());
-    };
-
-    let res = distributed::count_total::count_join(body);
+    let res = distributed::count_total::count_join(values);
+    let _ = redis_comm::count_store::remove_count_res(name);
+    
     valid_request(format!("file={},total={}", name, res))
 }
 
@@ -341,26 +338,23 @@ fn matrix_partial(req: HttpRequest) -> HttpResponse {
     // - params provided
     // - parsing of params
 
+    let job = req.params.get("job").unwrap();
     let row = req.params.get("row").unwrap();
     let column = req.params.get("column").unwrap();
     let row = row.parse::<usize>().unwrap();
     let column = column.parse::<usize>().unwrap();
 
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
-    let body = match req.body {
-        Body::JSON(content) => content,
-        _ => return invalid_request("Missing JSON content with matrices!".to_string()),
+    let Ok(matrices) = redis_comm::matrix_store::get_matrices_input(job) else {
+        return server_issue_response();
     };
 
-    // We parse the JSON using the matrix struct as the required data structure
-    // If the JSON doesn't adhere to the struct, we can error out
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
-    let Ok(matrices) = serde_json::from_str::<matrix::MatrixMultInput>(&body) else {
-        return invalid_request("Invalid JSON format for matrices!".to_string());
-    };
+    let value =  distributed::matrix_partial::matrix_cell_value(matrices, row, column);
+    let cell = MatrixPartialRes { row, column, value };
 
-    let res =  distributed::matrix_partial::matrix_cell_value(matrices, row, column);
-    valid_request(format!("row={}, column={}, value={}", row, column, res))
+    if let Err(_) = redis_comm::matrix_store::add_matrix_part_res(job, cell) {
+        return server_issue_response();
+    }
+    valid_request(format!("row={}, column={}, value={}", row, column, value))
 }
 
 fn matrix_total(req: HttpRequest) -> HttpResponse {
@@ -368,23 +362,28 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
     // - params provided
     // - parsing of params
 
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
-    let body = match req.body {
-        Body::JSON(content) => content,
-        _ => return invalid_request("Missing JSON content with values!".to_string()),
+    let job = req.params.get("job").unwrap();
+
+    let Ok(matrices) = redis_comm::matrix_store::get_matrices_input(job) else {
+        return server_issue_response();
+    };
+    
+    let Ok(values) = redis_comm::matrix_store::get_all_matrix_part_res(job) else {
+        return server_issue_response();
     };
 
-    // We parse the JSON using the matrix struct as the required data structure
-    // If the JSON doesn't adhere to the struct, we can error out
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
-    let Ok(body) = serde_json::from_str::<matrix::MatrixJoinInput>(&body) else {
-        return invalid_request("Invalid JSON format for matrices!".to_string());
-    };
+    let rows = matrices.matrix_a.matrix.len();
+    let columns = matrices.matrix_b.matrix[0].len();
 
-    let res = distributed::matrix_total::matrix_multi_join(2, 2, body.values);
-    let Ok(res) = serde_json::to_string(&res) else {
-        return invalid_request("Unable to parse resulting matrix!".to_string());
-    };
+    let res = distributed::matrix_total::matrix_multi_join(rows, columns, values);
+    
+    if let Err(_) = redis_comm::matrix_store::add_matrix_res(job, &res) {
+        return server_issue_response();
+    }
+
+    let _ = redis_comm::matrix_store::remove_job(job);
+
+    let res = serde_json::to_string(&res).unwrap();
 
     let version = "HTTP/1.1".to_string();
     let status = 200;
@@ -396,11 +395,14 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
 }
 
 fn invalid_request(contents: String) -> HttpResponse {
-    let res = HttpResponse::new("HTTP/1.1".to_string(), 400, HashMap::new(), contents);
-    res
+    HttpResponse::new("HTTP/1.1".to_string(), 400, HashMap::new(), contents)
 }
 
 fn valid_request(contents: String) -> HttpResponse {
-    let res = HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents);
-    res
+    HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents)
+}
+
+fn server_issue_response() -> HttpResponse {
+    let contents = "Unable to process your request at this time!".to_string();
+    HttpResponse::new("HTTP/1.1".to_string(), 500, HashMap::new(), contents)
 }

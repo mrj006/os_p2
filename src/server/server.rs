@@ -1,4 +1,4 @@
-use std::{env, io::Write};
+use std::io::Write;
 use std::net::{SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
 
 use crate::errors::{self, *};
@@ -10,8 +10,8 @@ use crate::status::status;
 use super::parser::parse;
 use super::routes;
 
-pub fn create_server(port: u16) {
-    report_to_master();
+pub fn create_server(port: u16, master_socket: String, slave_code: String) {
+    report_to_master(port, master_socket, slave_code);
     
     let address = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = TcpListener::bind(address);
@@ -87,12 +87,7 @@ fn send_response(mut req: TcpStream, res: HttpResponse)
     Ok(req.write_all(format!("{res}").as_bytes())?)
 }
 
-fn report_to_master() {
-    let Ok(master_socket) = env::var("MASTER_SOCKET") else {
-        log_error("Unable to read 'MASTER_SOCKET' from env variable!".into());
-        panic!("Unrecoverable error! Check logs.");
-    };
-
+fn report_to_master(port: u16, master_socket: String, slave_code: String) {
     // We get only the first entry as there should be only 1 DNS result 
     let master_socket = master_socket.to_socket_addrs().unwrap().next().unwrap();
 
@@ -102,14 +97,9 @@ fn report_to_master() {
         panic!("Unrecoverable error! Check logs.");
     };
 
-    // We can safely unwrap these vars as they were checked before starting the
-    // server
-    let port = env::var("SERVER_PORT").unwrap();
-    let slave_code = env::var("SLAVE_CODE").unwrap();
-
     let mut req = HttpRequest::default();
     req.method = "POST".to_string();
-    req.params.insert("port".to_string(), port);
+    req.params.insert("port".to_string(), port.to_string());
     req.params.insert("slave_code".to_string(), slave_code);
     req.uri.push("slave".to_string());
     req.version = "HTTP/1.1".to_string();

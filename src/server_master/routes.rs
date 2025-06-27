@@ -4,6 +4,7 @@ use tokio::net::TcpStream;
 use tokio::select;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use std::collections::HashMap;
 use std::env;
@@ -15,6 +16,7 @@ use crate::models::status::Status;
 use crate::{errors, functions};
 use crate::models::request::{Body, HttpRequest};
 use crate::models::response::{HttpResponse, Response};
+use crate::redis_comm;
 
 use super::slaves;
 
@@ -135,9 +137,14 @@ async fn count_words(req: HttpRequest) -> Response {
         // We unwrap the error to allow the task to panic. That way, we can
         // error put of the join and cancel all remaining tasks
         partial_task_handles.spawn(async move {
-            // The loop will automatically break when either the task resolves
-            // or there are no more slaves available
-            while !send_request_partial(partial.clone()).await.unwrap() {}
+                let is_done = Arc::new(Mutex::new(false));
+            
+                // The loop will automatically break when either the task resolves
+                // or there are no more slaves available
+                while !send_request_partial(partial.clone(), Arc::clone(&is_done)).await.unwrap() {}
+
+                let mut is_done = is_done.lock();
+                *is_done = true;
         });
     }
     
@@ -174,7 +181,6 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
 
     // We parse the JSON using the matrix struct as the required data structure
     // If the JSON doesn't adhere to the struct, we can error out
-    // TODO Could be done on master, once (save entry on redis, use key for read and write on slaves)
     let Ok(matrices) = serde_json::from_str::<matrix::MatrixMultInput>(&body) else {
         return Response::HTTP(invalid_request("Invalid JSON format for matrices!".to_string()));
     };
@@ -183,8 +189,15 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
         return Response::HTTP(invalid_request(e.to_string()));
     };
 
-    let rows = matrices.matrix_a.matrix[0].len();
-    let columns = matrices.matrix_b.matrix.len();
+    // We use this ID as part of the redis key
+    let job = Uuid::new_v4().to_string();
+    // We save the matrices on redis to simplify HTTP message to slaves
+    if let Err(_) = redis_comm::matrix_store::add_matrices_input(&job, &matrices) {
+        return Response::HTTP(server_issue_response());
+    }
+
+    let rows = matrices.matrix_a.matrix.len();
+    let columns = matrices.matrix_b.matrix[0].len();
 
     // This set allocates all partial tasks handles so we can check for errors
     let mut partial_task_handles = JoinSet::<()>::new();
@@ -195,6 +208,7 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
             let mut partial = HttpRequest::default();
             partial.method = req.method.clone();
             partial.uri.push("matrixpartial".to_string());
+            partial.params.insert("job".to_string(), job.clone());
             partial.params.insert("row".to_string(), i.to_string());
             partial.params.insert("column".to_string(), j.to_string());
             partial.version = req.version.clone();
@@ -203,9 +217,14 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
             // We unwrap the error to allow the task to panic. That way, we can
             // error put of the join and cancel all remaining tasks
             partial_task_handles.spawn(async move {
+                let is_done = Arc::new(Mutex::new(false));
+            
                 // The loop will automatically break when either the task resolves
                 // or there are no more slaves available
-                while !send_request_partial(partial.clone()).await.unwrap() {}
+                while !send_request_partial(partial.clone(), Arc::clone(&is_done)).await.unwrap() {}
+
+                let mut is_done = is_done.lock();
+                *is_done = true;
             });
         }
     }
@@ -218,12 +237,18 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
         }
     }
 
+    let Ok(matrix) = redis_comm::matrix_store::get_matrix_res(&job) else {
+        return Response::HTTP(server_issue_response());
+    };
+
     // At this point, we send the request to aggregate results
     let mut aggregate = HttpRequest::default();
     aggregate.method = req.method.clone();
     aggregate.uri.push("matrixtotal".to_string());
+    aggregate.params.insert("job".to_string(), job);
     aggregate.version = req.version.clone();
     aggregate.headers = req.headers.clone();
+    aggregate.body = Body::JSON(serde_json::to_string(&matrix).unwrap());
 
     send_request_atomic(aggregate).await
 }
@@ -297,6 +322,11 @@ fn valid_request(contents: String) -> HttpResponse {
     let headers = HashMap::new();
     
     HttpResponse::new(version, status, headers, contents)
+}
+
+fn server_issue_response() -> HttpResponse {
+    let contents = "Unable to process your request at this time!".to_string();
+    HttpResponse::new("HTTP/1.1".to_string(), 500, HashMap::new(), contents)
 }
 
 async fn send_request_atomic(req: HttpRequest) -> Response {
@@ -382,8 +412,13 @@ async fn send_request_base(req: HttpRequest, is_done: Arc<Mutex<bool>>) -> Resul
 }
 
 // We error out if there are no available slaves for assignment
-async fn send_request_partial(req: HttpRequest) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+async fn send_request_partial(req: HttpRequest, is_done: Arc<Mutex<bool>>) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    let done_clone = Arc::clone(&is_done);
+
     let Some((socket, token)) = slaves::get_current() else {
+        let mut is_done = is_done.lock();
+        *is_done = true;
+        
         return Err(Box::new(errors::slaves::SlavesMissingError));
     };
 
@@ -393,6 +428,12 @@ async fn send_request_partial(req: HttpRequest) -> Result<bool, Box<dyn std::err
         loop {
             let token_clone = token.clone();
             monitor_slave(socket, token_clone).await;
+
+            let is_done = done_clone.lock();
+
+            if *is_done {
+                break;
+            }
         }
     });
 
