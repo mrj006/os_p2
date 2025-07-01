@@ -7,13 +7,15 @@ mod distributed;
 mod errors;
 mod functions;
 mod models;
-mod pool;
-mod server;
+//mod pool;
+mod server_base;
+mod server_slave;
 mod server_master;
 mod status;
 mod redis_comm;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let port = check_env_var("SERVER_PORT", false);
     
     // We set a default port number if case of error reading or parsing
@@ -34,11 +36,13 @@ fn main() {
     // We default to slave role in case of error reading or matching the value
     if role == "MASTER" {
         log_info(format!("Starting server as master on port {}", port));
-        server_master::server::create_server(port);
+        server_base::server::create_server(port, role).await;
     } else {
         let master_socket = check_env_var("MASTER_SOCKET", true);
         log_info(format!("Starting server as slave on port {}", port));
-        server::server::create_server(port, master_socket, slave_code);
+
+        server_base::server::report_to_master(port, master_socket, slave_code);
+        server_base::server::create_server(port, role).await;
     }
 }
 

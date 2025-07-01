@@ -39,7 +39,7 @@ pub fn add_matrices_input(job: &str, matrices: &MatrixMultInput) -> RedisResult<
 }
 
 
-pub fn get_matrices_input(job: &str) -> Result<MatrixMultInput, Box<dyn std::error::Error>> {
+pub fn get_matrices_input(job: &str) -> Result<MatrixMultInput, redis::RedisError> {
     let key = format!("matrices_input:{}", job);
     let value: String = connection::get_value_from_redis(key)?;
     let matrices = serde_json::from_str::<MatrixMultInput>(&value).unwrap();
@@ -58,20 +58,14 @@ pub fn add_matrix_res(job: &str, matrix: &Matrix) -> RedisResult<()> {
     connection::add_data_to_redis(key, value)
 }
 
-pub fn get_matrix_res(job: &str) -> Result<Matrix, Box<dyn std::error::Error>> {
+pub fn get_matrix_res(job: &str) -> Result<Matrix, redis::RedisError> {
     let key = format!("matrices_output:{}", job);
     let value = connection::get_value_from_redis(key)?;
     let value = serde_json::from_str::<Matrix>(&value).unwrap();
     Ok(value)
 }
 
-pub fn remove_matrix_res(job: &str) -> RedisResult<()> {
-    let key = format!("matrices_output:{}", job);
-    connection::remove_key_from_redis(key)
-}
-
 pub fn remove_job(job: &str) -> RedisResult<()> {
     let _ = remove_matrices_input(job)?;
-    let _ = remove_all_matrix_part_res(job)?;
-    remove_matrix_res(job)
+    remove_all_matrix_part_res(job)
 }

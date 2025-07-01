@@ -22,10 +22,8 @@ pub fn handle_route(req: HttpRequest, remote: SocketAddr) -> HttpResponse {
     
     // Based on parsing logic, the vector will always have at least 1 item
     let base_uri = req.uri[0].as_str();
-    let pid = gettid::gettid();
-    status::update_thread(pid, true, base_uri.to_string());
-    status::increase_requests_handled();
-
+    update_thread_status(true, base_uri.to_string());
+    println!("Route: {}", base_uri);
     match base_uri {
         "createfile" => createfile(req),
         "deletefile" => deletefile(req),
@@ -314,7 +312,7 @@ fn count_partial(req: HttpRequest) -> HttpResponse {
     
     match redis_comm::count_store::add_count_part_res(name, part, count) {
         Ok(_) => valid_request(format!("file={},part={},words={}", name, part, count)),
-        Err(e) => server_issue_response(Box::new(e)),
+        Err(e) => redis_down_response(Box::new(e)),
     }
 }
 
@@ -327,11 +325,17 @@ fn count_total(req: HttpRequest) -> HttpResponse {
 
     let values = match redis_comm::count_store::get_count_part_res(name) {
         Ok(values) => values,
-        Err(e) => return server_issue_response(e),
+        Err(e) => return redis_down_response(Box::new(e)),
     };
 
     let res = distributed::count_total::count_join(values);
-    let _ = redis_comm::count_store::remove_count_res(name);
+    if let Err(e) = redis_comm::count_store::remove_count_part_res(&name) {
+        log_error(Box::new(e));
+    }
+
+    if let Err(e) = redis_comm::count_store::add_count_res(name, res) {
+        log_error(Box::new(e));
+    }
 
     valid_request(format!("file={},total={}", name, res))
 }
@@ -346,18 +350,19 @@ fn matrix_partial(req: HttpRequest) -> HttpResponse {
     let column = req.params.get("column").unwrap();
     let row = row.parse::<usize>().unwrap();
     let column = column.parse::<usize>().unwrap();
-
+    
     let matrices = match redis_comm::matrix_store::get_matrices_input(job) {
         Ok(matrices) => matrices,
-        Err(e) => return server_issue_response(e),
+        Err(e) => return redis_down_response(Box::new(e)),
     };
 
     let value =  distributed::matrix_partial::matrix_cell_value(matrices, row, column);
     let cell = MatrixPartialRes { row, column, value };
 
     if let Err(e) = redis_comm::matrix_store::add_matrix_part_res(job, cell) {
-        return server_issue_response(Box::new(e));
+        return redis_down_response(Box::new(e));
     }
+
     valid_request(format!("row={}, column={}, value={}", row, column, value))
 }
 
@@ -370,12 +375,12 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
 
     let matrices = match redis_comm::matrix_store::get_matrices_input(job) {
         Ok(matrices) => matrices,
-        Err(e) => return server_issue_response(e),
+        Err(e) => return redis_down_response(Box::new(e)),
     };
 
     let values = match redis_comm::matrix_store::get_all_matrix_part_res(job) {
         Ok(values) => values,
-        Err(e) => return server_issue_response(e),
+        Err(e) => return redis_down_response(e),
     };
 
     let rows = matrices.matrix_a.matrix.len();
@@ -384,12 +389,11 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
     let res = distributed::matrix_total::matrix_multi_join(rows, columns, values);
     
     if let Err(e) = redis_comm::matrix_store::add_matrix_res(job, &res) {
-        return server_issue_response(Box::new(e));
+        return redis_down_response(Box::new(e));
     }
 
-    let _ = redis_comm::matrix_store::remove_job(job);
-
     let res = serde_json::to_string(&res).unwrap();
+    let _ = redis_comm::matrix_store::remove_job(job);
 
     let version = "HTTP/1.1".to_string();
     let status = 200;
@@ -401,15 +405,27 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
 }
 
 fn invalid_request(contents: String) -> HttpResponse {
+    update_thread_status(false, "".to_string());
     HttpResponse::new("HTTP/1.1".to_string(), 400, HashMap::new(), contents)
 }
 
 fn valid_request(contents: String) -> HttpResponse {
+    update_thread_status(false, "".to_string());
     HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents)
 }
 
-fn server_issue_response(error: Box<dyn std::error::Error>) -> HttpResponse {
+fn redis_down_response(error: Box<dyn std::error::Error>) -> HttpResponse {
+    update_thread_status(false, "".to_string());
+    let contents = (&error).to_string();
     log_error(error);
-    let contents = "Unable to process your request at this time!".to_string();
     HttpResponse::new("HTTP/1.1".to_string(), 500, HashMap::new(), contents)
+}
+
+fn update_thread_status(busy: bool, command: String) {
+    let pid = gettid::gettid();
+    status::update_thread(pid, busy, command);
+
+    if busy {
+        status::increase_requests_handled();
+    }
 }

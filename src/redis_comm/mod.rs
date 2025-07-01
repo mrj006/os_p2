@@ -1,4 +1,4 @@
-mod connection;
+pub mod connection;
 pub mod count_store;
 pub mod matrix_store;
 

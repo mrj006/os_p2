@@ -2,12 +2,9 @@ use std::net::SocketAddr;
 use std::sync::{Arc, LazyLock};
 use indexmap::IndexMap;
 use parking_lot::Mutex;
-use tokio::select;
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
-use crate::client::client;
-use crate::models::request::HttpRequest;
 use crate::models::slave::Slave;
 
 static SLAVES_INDEX: LazyLock<Arc<Mutex<IndexMap<SocketAddr, Slave>>>> = LazyLock::new(|| build_index());
@@ -22,47 +19,52 @@ fn build_slaves() -> Arc<Mutex<JoinSet<()>>> {
     Arc::new(Mutex::new(JoinSet::<()>::new()))
 }
 
-async fn monitor_slave(socket: SocketAddr, token: CancellationToken) -> bool {
-    let mut ping = HttpRequest::default();
-    ping.method = "GET".to_string();
-    ping.uri.push("ping".to_string());
-    ping.version = "HTTP/1.1".to_string();
+async fn monitor_slave(slave: Slave) -> bool {
+    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    select! {
-        _ = client::send_request(socket, ping) => {
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-            true
-        }
-        
+    let is_active = Arc::clone(&slave.is_active);
+    let mut is_active = is_active.lock();
+
+    if *is_active {
+        *is_active = false;
+        true
+    } else {
         // If this branch completes, we need to cancel all slave-related tasks
         // and remove it from the map to avoid further assignments
-        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-            token.cancel();            
-            let _ = remove(socket);
-            false
-        }
+        slave.token.cancel();
+        let _ = remove(slave.socket);
+        false
     }
 }
 
 pub async fn add(socket: SocketAddr) {
+    // We need to first get a lock on the vector
+    let slaves_index = Arc::clone(&*SLAVES_INDEX);
+    let mut slaves_index = slaves_index.lock();
+
+    if let Some(slave) = slaves_index.get(&socket) {
+        let is_active = Arc::clone(&slave.is_active);
+        let mut is_active = is_active.lock();
+        *is_active = true;
+        return;
+    }
+
     // We create the cancellation token for the slave. This token will be used
     // to cancel any ongoing task if the slave is no longer reachable
     let token = CancellationToken::new();
-    let token_clone = token.clone();
+
+    let is_active = Arc::new(Mutex::new(true));
+    let slave = Slave { socket, token, is_active };
+    let slave_clone = slave.clone();
 
     // We spawn the thread that will continue to monitor the slave
     let slaves = Arc::clone(&*SLAVES);
     let mut slaves = slaves.lock();
     slaves.spawn(async move {        
         // As long as the slave is responsive, the task would be looping
-        while monitor_slave(socket, token_clone.clone()).await {}
+        while monitor_slave(slave_clone.clone()).await {}
     });
 
-    let slave = Slave { socket, token };
-
-    // We need to first get a lock on the vector
-    let slaves_index = Arc::clone(&*SLAVES_INDEX);
-    let mut slaves_index = slaves_index.lock();
     slaves_index.insert(socket, slave);
 }
 

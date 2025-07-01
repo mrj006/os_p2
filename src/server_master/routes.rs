@@ -1,12 +1,12 @@
 use tokio::select;
 use tokio::task::JoinSet;
-use uuid::Uuid;
 
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
 
 use crate::client::client;
+use crate::errors::log_error;
 use crate::models::matrix;
 use crate::models::slave::Slave;
 use crate::models::status::Status;
@@ -113,6 +113,19 @@ async fn count_words(req: HttpRequest) -> Response {
 
     let filepath = format!("archivos/{}", name);
 
+    // We check if we have counted the given file before. If the request fails
+    // for anything other than a connection refused, we can continue
+    match redis_comm::count_store::get_count_res(name) {
+        Ok(res) => {
+            return Response::HTTP(valid_request(format!("file={},total={}", name, res)));
+        },
+        Err(e) => {
+            if e.is_connection_refusal() {
+                return Response::HTTP(server_issue_response());
+            }
+        },
+    }
+
     match std::fs::exists(filepath) {
         Ok(res) => {
             if !res {
@@ -149,10 +162,15 @@ async fn count_words(req: HttpRequest) -> Response {
     
     while let Some(res) = partial_task_handles.join_next().await {
         if let Ok(res) = res {
-            // The only error possible is being out of slaves
-            if let Err(_) = res {
+            if let Err(e) = res {
+                log_error(e.to_string().into());
                 partial_task_handles.abort_all();
-                return Response::HTTP(missing_slaves());
+
+                if e.is::<errors::slaves::SlavesMissingError>() {
+                    return Response::HTTP(missing_slaves());
+                } else {
+                    return Response::HTTP(server_issue_response());
+                }
             }
         }
     }
@@ -190,8 +208,29 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
         return Response::HTTP(invalid_request(e.to_string()));
     };
 
-    // We use this ID as part of the redis key
-    let job = Uuid::new_v4().to_string();
+    // We use this ID as part of the redis key.
+    let job = functions::hash::hash(&body);
+
+    // We check if the matrix was already calculated, as we hashed the input
+    match redis_comm::matrix_store::get_matrix_res(&job) {
+        Ok(res) => {
+            let res = serde_json::to_string(&res).unwrap();
+            let version = "HTTP/1.1".to_string();
+            let status = 200;
+            let mut headers = HashMap::<String, String>::new();
+            headers.insert("Content-Type".to_string(), "application/json".to_string());
+            headers.insert("Content-Length".to_string(), res.len().to_string());
+
+            let res = HttpResponse::new(version, status, headers, res);
+
+            return Response::HTTP(res);
+        },
+        Err(e) => {
+            if e.is_connection_refusal() {
+                return Response::HTTP(server_issue_response());
+            }
+        },
+    }
 
     // We save the matrices on redis to simplify HTTP message to slaves
     if let Err(_) = redis_comm::matrix_store::add_matrices_input(&job, &matrices) {
@@ -208,13 +247,12 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
     for i in 0..rows {
         for j in 0..columns {
             let mut partial = HttpRequest::default();
-            partial.method = "GET".to_string();
+            partial.method = req.method.clone();
             partial.uri.push("matrixpartial".to_string());
             partial.params.insert("job".to_string(), job.clone());
             partial.params.insert("row".to_string(), i.to_string());
             partial.params.insert("column".to_string(), j.to_string());
             partial.version = "HTTP/1.1".to_string();
-            partial.headers = req.headers.clone();
 
             partial_task_handles.spawn(async move {            
                 send_request_partial(partial).await
@@ -224,17 +262,18 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
 
     while let Some(res) = partial_task_handles.join_next().await {
         if let Ok(res) = res {
-            // The only error possible is being out of slaves
-            if let Err(_) = res {
+            if let Err(e) = res {
+                log_error(e.to_string().into());
                 partial_task_handles.abort_all();
-                return Response::HTTP(missing_slaves());
+
+                if e.is::<errors::slaves::SlavesMissingError>() {
+                    return Response::HTTP(missing_slaves());
+                } else {
+                    return Response::HTTP(server_issue_response());
+                }
             }
         }
     }
-
-    let Ok(matrix) = redis_comm::matrix_store::get_matrix_res(&job) else {
-        return Response::HTTP(server_issue_response());
-    };
 
     // At this point, we send the request to aggregate results
     let mut aggregate = HttpRequest::default();
@@ -242,8 +281,6 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
     aggregate.uri.push("matrixtotal".to_string());
     aggregate.params.insert("job".to_string(), job);
     aggregate.version = req.version.clone();
-    aggregate.headers = req.headers.clone();
-    aggregate.body = Body::JSON(serde_json::to_string(&matrix).unwrap());
 
     send_request_atomic(aggregate).await
 }
@@ -348,12 +385,24 @@ async fn send_request_atomic(req: HttpRequest) -> Response {
     }
 }
 
-// We can ignore the response as we save it on redis. Only the error on being
-// out of slaves is important
+// We error out if we are out of slaves is important or if redis is down, as it
+// is required for parallelized tasks
 async fn send_request_partial(req: HttpRequest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     loop {
         match send_request_base(req.clone()).await {
-            Ok(_) => return Ok(()),
+            Ok(res) => {
+                // The function on returns this Response kind
+                if let Response::Buffer(buf) = res {
+                    let res = HttpResponse::from(buf);
+
+                    // Currently, the only scenario is having redis down
+                    if res.status != 200 {
+                        return Err(res.contents.into());
+                    } else {
+                        return Ok(());
+                    }
+                }
+            },
             Err(e) => {
                 if e.is::<errors::slaves::SlavesMissingError>() {
                     return Err(e);
@@ -367,8 +416,19 @@ async fn send_request_partial(req: HttpRequest) -> Result<(), Box<dyn std::error
 
 async fn send_request_specific(req: HttpRequest, slave: Slave) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     select! {
-        buffer = client::send_request(slave.socket, req) => {
-            Ok(Response::Buffer(buffer))
+        buffer = client::send_async_request(slave.socket, req) => {
+            match buffer {
+                Ok(buffer) => {
+                    if buffer.len() == 0 {
+                        Err(Box::new(errors::slaves::SlaveFailedError))
+                    } else {
+                        Ok(Response::Buffer(buffer))
+                    }
+                },
+                Err(_) => {
+                    Err(Box::new(errors::slaves::SlaveFailedError))
+                }
+            }
         }
 
         _ = slave.token.cancelled() => {
@@ -383,8 +443,19 @@ async fn send_request_base(req: HttpRequest) -> Result<Response, Box<dyn std::er
     };
 
     select! {
-        buffer = client::send_request(slave.socket, req) => {
-            Ok(Response::Buffer(buffer))
+        buffer = client::send_async_request(slave.socket, req) => {
+            match buffer {
+                Ok(buffer) => {
+                    if buffer.len() == 0 {
+                        Err(Box::new(errors::slaves::SlaveFailedError))
+                    } else {
+                        Ok(Response::Buffer(buffer))
+                    }
+                },
+                Err(_) => {
+                    Err(Box::new(errors::slaves::SlaveFailedError))
+                }
+            }
         }
 
         _ = slave.token.cancelled() => {

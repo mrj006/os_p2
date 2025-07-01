@@ -17,7 +17,7 @@ pub fn add_data_to_redis(key: String, value: String) -> RedisResult<()> {
     redis.set(key, value)
 }
 
-pub fn get_value_from_redis(key: String) -> Result<String, Box<dyn std::error::Error>> {
+pub fn get_value_from_redis(key: String) -> Result<String, redis::RedisError> {
     // We attempt to connect to the DB
     let mut connection = connect_to_redis()?;
     let redis = &mut connection;
@@ -26,7 +26,7 @@ pub fn get_value_from_redis(key: String) -> Result<String, Box<dyn std::error::E
     Ok(value)
 }
 
-pub fn get_values_from_redis(pattern: String) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn get_values_from_redis(pattern: String) -> Result<Vec<String>, redis::RedisError> {
     // We attempt to connect to the DB
     let mut connection = connect_to_redis()?;
     let redis = &mut connection;

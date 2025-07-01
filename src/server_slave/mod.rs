@@ -1,6 +1,4 @@
-mod parser;
-mod routes;
-pub mod server;
+pub mod routes;
 
 #[cfg(test)]
 mod tests {
