@@ -2,6 +2,7 @@ use std::env;
 
 use crate::errors::{log_error, log_info};
 
+mod client;
 mod distributed;
 mod errors;
 mod functions;

@@ -118,14 +118,12 @@ fn parse_body(buf_reader: &mut BufReader<&mut &TcpStream>, headers: &HashMap<Str
 
     let content_type = headers.get("Content-Type");
 
-    // This implies the request has a body but it didn't report the type
-    // thus, it's invalid
-    if content_type.is_none() {
-        return Err(Box::new(parse::ParseUriError));
-    }
-    
-    // This unwrap shouldn't fail as we checked it and return early in the if above
-    let content_type = content_type.unwrap().to_string();
+    let content_type = match content_type {
+        Some(content_type) => content_type,
+        // This implies the request has a body but it didn't report the type
+        // thus, it's invalid
+        None => return Err(Box::new(parse::ParseUriError)),
+    };
 
     if content_type != "application/x-www-form-urlencoded" && content_type != "application/json" {
         return Err(Box::new(implement::ImplementationError));

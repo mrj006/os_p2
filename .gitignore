@@ -3,7 +3,11 @@
 
 # Rust
 /target
-Cargo.lock
 
 # MacOS
 .DS_Store
+
+# Project
+/logs
+
+/archivos

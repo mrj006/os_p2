@@ -14,33 +14,38 @@ pub fn create_server(port: u16, master_socket: String, slave_code: String) {
     report_to_master(port, master_socket, slave_code);
     
     let address = SocketAddr::from(([0, 0, 0, 0], port));
-    let listener = TcpListener::bind(address);
 
-    // At this point, we couldn't bind the address, so we panic the project
-    if let Err(e) = listener {
-        log_error(Box::new(e));
-        panic!("Unrecoverable error! Check logs.");
+    let listener = match TcpListener::bind(address) {
+        Ok(listener) => listener,
+        Err(e) => {
+            log_error(Box::new(e));
+            panic!("Unrecoverable error! Check logs.");
+        },
+    };
+
+    match listener.set_nonblocking(true) {
+        Ok(_) => (),
+        Err(_) => log_error("Unable to set TCP listener to non-blocking mode!".into()),
     }
 
     status::update_main_pid(gettid::gettid());
 
-    let pool = pool::threadpool::ThreadPool::build(4);
+    let pool = match pool::threadpool::ThreadPool::build(4) {
+        Ok(pool) => pool,
+        Err(e) => {
+            log_error(e);
+            panic!("Unrecoverable error! Check logs.");
+        },
+    };
 
-    // At this point, we couldn't start the thread pool, so we panic the project
-    if let Err(e) = pool {
-        log_error(e);
-        panic!("Unrecoverable error! Check logs.");
-    }
-
-    let pool = pool.unwrap();
-
-    // WE can safely unwrap the listener as the errors are already handled
-    for stream in listener.unwrap().incoming() {
+    for stream in listener.incoming() {
         // We can ignore stream errors as we wouldn't be able to do anything
-        if stream.is_ok() {
+        if let Ok(stream) = stream {
             pool.execute(move || {
-                let stream = stream.unwrap();
-                let remote = stream.peer_addr().unwrap();
+                let Ok(remote) = stream.peer_addr() else {
+                    return;
+                };
+
                 if let Err(e) = handle_requests(stream, remote) {
                     log_error(e);
                 }
@@ -53,23 +58,24 @@ fn handle_requests(req: TcpStream, remote: SocketAddr) -> Result<(), Box<dyn std
     let version = "HTTP/1.1".to_string();
     let message = parse(&req);
 
-    // Error handling based on error type
-    if let Err(e) = &message {
-        if e.is::<errors::parse::ParseUriError>() {
-        let res = HttpResponse::basic(400);
-            return send_response(req, res);
-        }
-
-        if e.is::<errors::implement::ImplementationError>() {
-        let res = HttpResponse::basic(501);
-            return send_response(req, res);
-        } else {
-        let res = HttpResponse::basic(500);
-            return send_response(req, res);
-        }
-    }
-
-    let message = message.unwrap();
+    let message = match message {
+        Ok(message) => message,
+        // Error handling based on error type
+        Err(e) => {
+            if e.is::<errors::parse::ParseUriError>() {
+            let res = HttpResponse::basic(400);
+                return send_response(req, res);
+            }
+        
+            if e.is::<errors::implement::ImplementationError>() {
+            let res = HttpResponse::basic(501);
+                return send_response(req, res);
+            } else {
+            let res = HttpResponse::basic(500);
+                return send_response(req, res);
+            }
+        },
+    };
 
     if message.version != version {
         let res = HttpResponse::basic(505);

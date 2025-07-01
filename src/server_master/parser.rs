@@ -105,15 +105,12 @@ async fn parse_headers(buf_reader: &mut BufReader<&mut TcpStream>) -> HashMap<St
 async fn parse_body(buf_reader: &mut BufReader<&mut TcpStream>, headers: &HashMap<String, String>) -> Result<Body, Box<dyn std::error::Error + Send + Sync>> {
     let mut body = Body::JSON(String::new());
 
-    let content_length = headers.get("Content-Length");
-
     // If the header is missing, we return early with an empty hashmap
-    if content_length.is_none() {
+    let Some(content_length) = headers.get("Content-Length") else {
         return Ok(body);
-    }
+    };
 
-    // This unwrap shouldn't fail as we checked it and return early in the if above
-    let content_length = content_length.unwrap().parse::<u64>()?;
+    let content_length = content_length.parse::<u64>()?;
 
     // If the content is 0-length'd, we can stop the function
     if content_length == 0 {
@@ -122,14 +119,12 @@ async fn parse_body(buf_reader: &mut BufReader<&mut TcpStream>, headers: &HashMa
 
     let content_type = headers.get("Content-Type");
 
-    // This implies the request has a body but it didn't report the type
-    // thus, it's invalid
-    if content_type.is_none() {
-        return Err(Box::new(parse::ParseUriError));
-    }
-    
-    // This unwrap shouldn't fail as we checked it and return early in the if above
-    let content_type = content_type.unwrap().to_string();
+    let content_type = match content_type {
+        Some(content_type) => content_type,
+        // This implies the request has a body but it didn't report the type
+        // thus, it's invalid
+        None => return Err(Box::new(parse::ParseUriError)),
+    };
 
     if content_type != "application/x-www-form-urlencoded" && content_type != "application/json" {
         return Err(Box::new(implement::ImplementationError));

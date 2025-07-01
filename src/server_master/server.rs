@@ -63,23 +63,24 @@ async fn handle_requests(req: TcpStream, remote: SocketAddr) {
     let version = "HTTP/1.1".to_string();
     let message = parse(parsing_req).await;
 
-    // Error handling based on error type
-    if let Err(e) = &message {
-        if e.is::<errors::parse::ParseUriError>() {
-        let res = HttpResponse::basic(400);
-            return send_response(req, res).await;
-        }
-
-        if e.is::<errors::implement::ImplementationError>() {
-        let res = HttpResponse::basic(501);
-            return send_response(req, res).await;
-        } else {
-        let res = HttpResponse::basic(500);
-            return send_response(req, res).await;
-        }
-    }
-
-    let message = message.unwrap();
+    let message = match message {
+        Ok(message) => message,
+        // Error handling based on error type
+        Err(e) => {
+            if e.is::<errors::parse::ParseUriError>() {
+            let res = HttpResponse::basic(400);
+                return send_response(req, res).await;
+            }
+        
+            if e.is::<errors::implement::ImplementationError>() {
+            let res = HttpResponse::basic(501);
+                return send_response(req, res).await;
+            } else {
+            let res = HttpResponse::basic(500);
+                return send_response(req, res).await;
+            }
+        },
+    };
 
     if message.version != version {
         let res = HttpResponse::basic(505);

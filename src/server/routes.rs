@@ -1,6 +1,7 @@
 use std::{collections::HashMap, env};
 use std::net::{SocketAddr, ToSocketAddrs};
 
+use crate::errors::log_error;
 use crate::models::matrix::MatrixPartialRes;
 use crate::models::{request::HttpRequest, response::HttpResponse};
 use crate::status::status;
@@ -313,7 +314,7 @@ fn count_partial(req: HttpRequest) -> HttpResponse {
     
     match redis_comm::count_store::add_count_part_res(name, part, count) {
         Ok(_) => valid_request(format!("file={},part={},words={}", name, part, count)),
-        Err(_) => server_issue_response(),
+        Err(e) => server_issue_response(Box::new(e)),
     }
 }
 
@@ -323,13 +324,15 @@ fn count_total(req: HttpRequest) -> HttpResponse {
     // - parsing of params
 
     let name = req.params.get("name").unwrap();
-    let Ok(values) = redis_comm::count_store::get_count_part_res(name) else {
-        return server_issue_response();
+
+    let values = match redis_comm::count_store::get_count_part_res(name) {
+        Ok(values) => values,
+        Err(e) => return server_issue_response(e),
     };
 
     let res = distributed::count_total::count_join(values);
     let _ = redis_comm::count_store::remove_count_res(name);
-    
+
     valid_request(format!("file={},total={}", name, res))
 }
 
@@ -344,15 +347,16 @@ fn matrix_partial(req: HttpRequest) -> HttpResponse {
     let row = row.parse::<usize>().unwrap();
     let column = column.parse::<usize>().unwrap();
 
-    let Ok(matrices) = redis_comm::matrix_store::get_matrices_input(job) else {
-        return server_issue_response();
+    let matrices = match redis_comm::matrix_store::get_matrices_input(job) {
+        Ok(matrices) => matrices,
+        Err(e) => return server_issue_response(e),
     };
 
     let value =  distributed::matrix_partial::matrix_cell_value(matrices, row, column);
     let cell = MatrixPartialRes { row, column, value };
 
-    if let Err(_) = redis_comm::matrix_store::add_matrix_part_res(job, cell) {
-        return server_issue_response();
+    if let Err(e) = redis_comm::matrix_store::add_matrix_part_res(job, cell) {
+        return server_issue_response(Box::new(e));
     }
     valid_request(format!("row={}, column={}, value={}", row, column, value))
 }
@@ -364,12 +368,14 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
 
     let job = req.params.get("job").unwrap();
 
-    let Ok(matrices) = redis_comm::matrix_store::get_matrices_input(job) else {
-        return server_issue_response();
+    let matrices = match redis_comm::matrix_store::get_matrices_input(job) {
+        Ok(matrices) => matrices,
+        Err(e) => return server_issue_response(e),
     };
-    
-    let Ok(values) = redis_comm::matrix_store::get_all_matrix_part_res(job) else {
-        return server_issue_response();
+
+    let values = match redis_comm::matrix_store::get_all_matrix_part_res(job) {
+        Ok(values) => values,
+        Err(e) => return server_issue_response(e),
     };
 
     let rows = matrices.matrix_a.matrix.len();
@@ -377,8 +383,8 @@ fn matrix_total(req: HttpRequest) -> HttpResponse {
 
     let res = distributed::matrix_total::matrix_multi_join(rows, columns, values);
     
-    if let Err(_) = redis_comm::matrix_store::add_matrix_res(job, &res) {
-        return server_issue_response();
+    if let Err(e) = redis_comm::matrix_store::add_matrix_res(job, &res) {
+        return server_issue_response(Box::new(e));
     }
 
     let _ = redis_comm::matrix_store::remove_job(job);
@@ -402,7 +408,8 @@ fn valid_request(contents: String) -> HttpResponse {
     HttpResponse::new("HTTP/1.1".to_string(), 200, HashMap::new(), contents)
 }
 
-fn server_issue_response() -> HttpResponse {
+fn server_issue_response(error: Box<dyn std::error::Error>) -> HttpResponse {
+    log_error(error);
     let contents = "Unable to process your request at this time!".to_string();
     HttpResponse::new("HTTP/1.1".to_string(), 500, HashMap::new(), contents)
 }

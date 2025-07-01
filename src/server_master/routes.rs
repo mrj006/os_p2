@@ -1,17 +1,14 @@
-use parking_lot::Mutex;
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
 use tokio::select;
 use tokio::task::JoinSet;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use std::collections::HashMap;
 use std::env;
 use std::net::SocketAddr;
-use std::sync::Arc;
 
+use crate::client::client;
 use crate::models::matrix;
+use crate::models::slave::Slave;
 use crate::models::status::Status;
 use crate::{errors, functions};
 use crate::models::request::{Body, HttpRequest};
@@ -40,7 +37,7 @@ pub async  fn handle_route(req: HttpRequest, remote: SocketAddr) -> Response {
         "countwords" => count_words(req).await,
         "matrixmult" => matrix_multiplication(req).await,
         "workers" => workers(req).await,
-        "slave" => add_slave(req, remote),
+        "slave" => add_slave(req, remote).await,
         _ => Response::HTTP(HttpResponse::basic(404))
     }
 }
@@ -75,17 +72,28 @@ async fn loadtest(req: HttpRequest) -> Response {
         return Response::HTTP(invalid_request("Unable to parse sleep!".to_string()));
     };
 
+    let mut task_handles= JoinSet::new();
+
     for _ in 0..tasks {
-        let method = "GET".to_string();
-        let uri = vec!["sleep".to_string()];
-        let mut params = HashMap::new();
-        params.insert("seconds".to_string(), sleep.to_string());
-        let version = "HTTP/1.1".to_string();
-        let headers = HashMap::new();
-        let body = Body::JSON(String::new());
-    
-        let req = HttpRequest::new(method, uri, params, version, headers, body);
-        send_request_atomic(req).await;
+        let mut req = HttpRequest::default();
+        req.method = "GET".to_string();
+        req.uri.push("sleep".to_string());
+        req.params.insert("seconds".to_string(), sleep.to_string());
+        req.version = "HTTP/1.1".to_string();
+        
+        task_handles.spawn(async move {
+            send_request_partial(req).await
+        });
+    }
+
+    while let Some(res) = task_handles.join_next().await {
+        if let Ok(res) = res {
+            // The only error possible is being out of slaves
+            if let Err(_) = res {
+                task_handles.abort_all();
+                return Response::HTTP(missing_slaves());
+            }
+        }
     }
 
     let contents = format!("{tasks} sleep tasks with a duration of {sleep} seconds were spawned");
@@ -121,7 +129,7 @@ async fn count_words(req: HttpRequest) -> Response {
     }
 
     // This set allocates all partial tasks handles so we can check for errors
-    let mut partial_task_handles = JoinSet::<()>::new();
+    let mut partial_task_handles = JoinSet::<Result<(), Box<dyn std::error::Error + Send + Sync>>>::new();
 
     // We create al partial http request
     for i in 0..parts {
@@ -134,25 +142,18 @@ async fn count_words(req: HttpRequest) -> Response {
         partial.version = req.version.clone();
         partial.headers = req.headers.clone();
 
-        // We unwrap the error to allow the task to panic. That way, we can
-        // error put of the join and cancel all remaining tasks
-        partial_task_handles.spawn(async move {
-                let is_done = Arc::new(Mutex::new(false));
-            
-                // The loop will automatically break when either the task resolves
-                // or there are no more slaves available
-                while !send_request_partial(partial.clone(), Arc::clone(&is_done)).await.unwrap() {}
-
-                let mut is_done = is_done.lock();
-                *is_done = true;
+        partial_task_handles.spawn(async move {            
+            send_request_partial(partial).await
         });
     }
     
     while let Some(res) = partial_task_handles.join_next().await {
-        // The only error possible is being out of slaves
-        if let Err(_) = res {
-            partial_task_handles.abort_all();
-            return Response::HTTP(missing_slaves());
+        if let Ok(res) = res {
+            // The only error possible is being out of slaves
+            if let Err(_) = res {
+                partial_task_handles.abort_all();
+                return Response::HTTP(missing_slaves());
+            }
         }
     }
 
@@ -191,6 +192,7 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
 
     // We use this ID as part of the redis key
     let job = Uuid::new_v4().to_string();
+
     // We save the matrices on redis to simplify HTTP message to slaves
     if let Err(_) = redis_comm::matrix_store::add_matrices_input(&job, &matrices) {
         return Response::HTTP(server_issue_response());
@@ -200,40 +202,33 @@ async fn matrix_multiplication(req: HttpRequest) -> Response {
     let columns = matrices.matrix_b.matrix[0].len();
 
     // This set allocates all partial tasks handles so we can check for errors
-    let mut partial_task_handles = JoinSet::<()>::new();
+    let mut partial_task_handles = JoinSet::<Result<(), Box<dyn std::error::Error + Send + Sync>>>::new();
 
     // We create al partial http request
     for i in 0..rows {
         for j in 0..columns {
             let mut partial = HttpRequest::default();
-            partial.method = req.method.clone();
+            partial.method = "GET".to_string();
             partial.uri.push("matrixpartial".to_string());
             partial.params.insert("job".to_string(), job.clone());
             partial.params.insert("row".to_string(), i.to_string());
             partial.params.insert("column".to_string(), j.to_string());
-            partial.version = req.version.clone();
+            partial.version = "HTTP/1.1".to_string();
             partial.headers = req.headers.clone();
 
-            // We unwrap the error to allow the task to panic. That way, we can
-            // error put of the join and cancel all remaining tasks
-            partial_task_handles.spawn(async move {
-                let is_done = Arc::new(Mutex::new(false));
-            
-                // The loop will automatically break when either the task resolves
-                // or there are no more slaves available
-                while !send_request_partial(partial.clone(), Arc::clone(&is_done)).await.unwrap() {}
-
-                let mut is_done = is_done.lock();
-                *is_done = true;
+            partial_task_handles.spawn(async move {            
+                send_request_partial(partial).await
             });
         }
     }
 
     while let Some(res) = partial_task_handles.join_next().await {
-        // The only error possible is being out of slaves
-        if let Err(_) = res {
-            partial_task_handles.abort_all();
-            return Response::HTTP(missing_slaves());
+        if let Ok(res) = res {
+            // The only error possible is being out of slaves
+            if let Err(_) = res {
+                partial_task_handles.abort_all();
+                return Response::HTTP(missing_slaves());
+            }
         }
     }
 
@@ -265,25 +260,34 @@ async fn workers(req: HttpRequest) -> Response {
     let mut worker_status: Vec<Status> = vec![];
 
     // This set allocates all partial tasks handles so we can check for errors
-    let mut partial_task_handles: JoinSet<Response> = (0..slaves)
-        .map(|index| {
-            let mut req = req.clone();
-            req.uri = vec!["status".to_string()];
-            
-            async move {
-                let (slave, token) = slaves::get_specific(index).unwrap();
-                send_request_specific(req, slave, token).await
+    let mut partial_task_handles = JoinSet::<Option<Response>>::new();
+
+    for index in 0..slaves {
+        let mut req = req.clone();
+        req.uri = vec!["status".to_string()];
+
+        let Some(slave) = slaves::get_specific(index) else {
+            continue;
+        };
+
+        partial_task_handles.spawn(async move {
+            match send_request_specific(req, slave).await {
+                Ok(res) => Some(res),
+                Err(_) => None,
             }
-        }).collect();
+        });
+    }
 
     while let Some(res) = partial_task_handles.join_next().await {
         // We can ignore the error because it means the slave is gone
         if let Ok(res) = res {
-            // The function only returns buffers, so we can ignore the http arm
-            if let Response::Buffer(buf) = res {
-                let res = HttpResponse::from(buf);
-                let status = serde_json::from_str::<Status>(&res.contents).unwrap();
-                worker_status.push(status);
+            if let Some(res) = res {
+                // The function only returns buffers, so we can ignore the http arm
+                if let Response::Buffer(buf) = res {
+                    let res = HttpResponse::from(buf);
+                    let status = serde_json::from_str::<Status>(&res.contents).unwrap();
+                    worker_status.push(status);
+                }
             }
         }
     }
@@ -330,177 +334,66 @@ fn server_issue_response() -> HttpResponse {
 }
 
 async fn send_request_atomic(req: HttpRequest) -> Response {
-    let is_done = Arc::new(Mutex::new(false));
-
     loop {
-        let res = send_request_base(req.clone(), Arc::clone(&is_done)).await.unwrap(); 
-        let mut is_done = is_done.lock();
-        *is_done = true;
-
-        return res;
-    }
-}
-
-async fn send_request_specific(req: HttpRequest, slave: SocketAddr, token: CancellationToken) -> Response {
-    let is_done = Arc::new(Mutex::new(false));
-
-    loop {
-        let done_clone = Arc::clone(&is_done);
-        let token_clone = token.clone();
-
-        tokio::spawn(async move {
-            loop {
-                let token_clone = token.clone();
-                monitor_slave(slave, token_clone).await;
-
-                let is_done = done_clone.lock();
-
-                if *is_done {
-                    break;
+        match send_request_base(req.clone()).await {
+            Ok(res) => return res,
+            Err(e) => {
+                if e.is::<errors::slaves::SlavesMissingError>() {
+                    return Response::HTTP(missing_slaves());
+                } else {
+                    continue;
                 }
-            }
-        });
-
-        let res = select! {
-            buffer = send_request_slave(slave, req.clone()) => {
-                Ok(Response::Buffer(buffer))
-            }
-
-            _ = token_clone.cancelled() => {
-                Err(Box::new(errors::slaves::SlaveFailedError))
-            }
-        };
-
-        let res = res.unwrap();
-        let mut is_done = is_done.lock();
-        *is_done = true;
-
-        return res;
+            },
+        }
     }
 }
 
-async fn send_request_base(req: HttpRequest, is_done: Arc<Mutex<bool>>) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
-    let done_clone = Arc::clone(&is_done);
-
-    let Some((socket, token)) = slaves::get_current() else {
-        return Ok(Response::HTTP(missing_slaves()));
-    };
-
-    let token_clone = token.clone();
-    tokio::spawn(async move {
-        loop {
-            let token_clone = token.clone();
-            monitor_slave(socket, token_clone).await;
-
-            let is_done = done_clone.lock();
-
-            if *is_done {
-                break;
-            }
+// We can ignore the response as we save it on redis. Only the error on being
+// out of slaves is important
+async fn send_request_partial(req: HttpRequest) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    loop {
+        match send_request_base(req.clone()).await {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                if e.is::<errors::slaves::SlavesMissingError>() {
+                    return Err(e);
+                } else {
+                    continue;
+                }
+            },
         }
-    });
+    }
+}
 
+async fn send_request_specific(req: HttpRequest, slave: Slave) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
     select! {
-        buffer = send_request_slave(socket, req) => {
+        buffer = client::send_request(slave.socket, req) => {
             Ok(Response::Buffer(buffer))
         }
 
-        _ = token_clone.cancelled() => {
+        _ = slave.token.cancelled() => {
             Err(Box::new(errors::slaves::SlaveFailedError))
         }
     }
 }
 
-// We error out if there are no available slaves for assignment
-async fn send_request_partial(req: HttpRequest, is_done: Arc<Mutex<bool>>) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let done_clone = Arc::clone(&is_done);
-
-    let Some((socket, token)) = slaves::get_current() else {
-        let mut is_done = is_done.lock();
-        *is_done = true;
-        
+async fn send_request_base(req: HttpRequest) -> Result<Response, Box<dyn std::error::Error + Send + Sync>> {
+    let Some(slave) = slaves::get_current() else {
         return Err(Box::new(errors::slaves::SlavesMissingError));
     };
 
-    let token_clone = token.clone();
-
-    tokio::spawn(async move {
-        loop {
-            let token_clone = token.clone();
-            monitor_slave(socket, token_clone).await;
-
-            let is_done = done_clone.lock();
-
-            if *is_done {
-                break;
-            }
-        }
-    });
-
     select! {
-        _ = send_request_slave(socket, req) => {
-            Ok(true)
+        buffer = client::send_request(slave.socket, req) => {
+            Ok(Response::Buffer(buffer))
         }
 
-        _ = token_clone.cancelled() => {
-            Ok(false)
-        }
-    }
-}
-
-async fn send_request_slave(socket: SocketAddr, req: HttpRequest) -> Vec<u8> {
-    let message = format!("{}", req);
-
-    let mut stream = TcpStream::connect(socket).await.unwrap();
-    let _ = stream.write_all(message.as_bytes()).await;
-    
-    loop {
-        // Wait for the socket to be readable
-        let _ = stream.readable().await;
-
-        let mut buf = vec![0; 4096];
-
-        // Try to read data, this may still fail with `WouldBlock`
-        // if the readiness event is a false positive.
-        match stream.try_read(&mut buf) {
-            Ok(0) => return vec![0; 0],
-            Ok(n) => {
-                buf.truncate(n);
-                return buf;
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                continue;
-            }
-            Err(_) => {
-                return vec![0; 0];
-            }
+        _ = slave.token.cancelled() => {
+            Err(Box::new(errors::slaves::SlaveFailedError))
         }
     }
 }
 
-async fn monitor_slave(socket: SocketAddr, token: CancellationToken) -> bool {
-    let mut ping = HttpRequest::default();
-    ping.method = "GET".to_string();
-    ping.uri.push("ping".to_string());
-    ping.version = "HTTP/1.1".to_string();
-
-    select! {
-        _ = send_request_slave(socket, ping) => {
-            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-            true
-        }
-        
-        // If this branch completes, we need to cancel all slave-related tasks
-        // and remove it from the map to avoid further assignments
-        _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
-            token.cancel();            
-            let _ = slaves::remove(socket);
-            false
-        }
-    }
-}
-
-fn add_slave(req: HttpRequest, remote: SocketAddr) -> Response {
+async fn add_slave(req: HttpRequest, remote: SocketAddr) -> Response {
     let slave_code = env::var("SLAVE_CODE").unwrap();
 
     let Some(port) = req.params.get("port") else {
@@ -521,7 +414,7 @@ fn add_slave(req: HttpRequest, remote: SocketAddr) -> Response {
 
     let ip_socket: SocketAddr = format!("{}:{}", remote.ip(), port).parse().unwrap();
 
-    slaves::add(ip_socket);
+    slaves::add(ip_socket).await;
 
     Response::HTTP(valid_request("".to_string()))
 }
