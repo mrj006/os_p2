@@ -52,7 +52,7 @@ spec:
       containers:
       - name: master-container
         # Reemplazar con el nombre de la imagen :) 
-        image: lmaagesen/os-p2-app:latest
+        image: mrj006/os-p2:latest
         ports:
         - containerPort: 7878
         env:
@@ -99,7 +99,7 @@ spec:
       containers:
       - name: slave-container
         # Reemplazar con el nombre de la imagen :) 
-        image: lmaagesen/os-p2-app:latest
+        image: mrj006/os-p2:latest
         ports:
         - containerPort: 7878
         env:

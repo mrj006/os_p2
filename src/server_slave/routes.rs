@@ -1,5 +1,5 @@
-use std::{collections::HashMap, env};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::collections::HashMap;
+use std::net::SocketAddr;
 
 use crate::errors::log_error;
 use crate::models::matrix::MatrixPartialRes;
@@ -8,18 +8,7 @@ use crate::status::status;
 use crate::{distributed, functions};
 use crate::redis_comm;
 
-pub fn handle_route(req: HttpRequest, remote: SocketAddr) -> HttpResponse {
-    // We can safely unwrap the results as we checked for the variable before
-    // starting the server
-    let master_socket = env::var("MASTER_SOCKET").unwrap();
-
-    // We get only the first entry as there should be only 1 DNS result
-    let master_socket = master_socket.to_socket_addrs().unwrap().next().unwrap();
-
-    if remote.ip() != master_socket.ip() {
-        return invalid_request("This server will only accept messages from its master!".to_string());
-    }
-    
+pub fn handle_route(req: HttpRequest, _: SocketAddr) -> HttpResponse {
     // Based on parsing logic, the vector will always have at least 1 item
     let base_uri = req.uri[0].as_str();
     update_thread_status(true, base_uri.to_string());

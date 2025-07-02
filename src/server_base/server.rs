@@ -97,6 +97,8 @@ pub fn report_to_master(port: u16, master_socket: String, slave_code: String) {
     // we make sure the slave can report to the master, even if all runtime's
     // threads are busy doing actual work
     std::thread::spawn(move || {
+        // AS the master could take some time to initialize, we wait some time once
+        std::thread::sleep(std::time::Duration::from_secs(10));
         loop {
             // We get only the first entry as there should be only 1 DNS result 
             let master_socket = master_socket.to_socket_addrs().unwrap().next().unwrap();
